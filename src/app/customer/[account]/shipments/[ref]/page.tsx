@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { shipments } from "@/data";
 import { visible } from "@/domain";
-import { customerAlert, customerPersona, customers, Header, ShipmentBody, ShipmentHead, shipmentViews, Timeline } from "@/ui";
+import { CustomerShipment, Header } from "@/live";
+import { customerPersona, customers } from "@/ui";
 
 export function generateStaticParams() {
   return customers.flatMap((p) => visible(p, shipments).map((s) => ({ account: p.accountIds![0], ref: s.ref })));
@@ -13,21 +14,13 @@ export default async function Page({ params }: PageProps<"/customer/[account]/sh
   const persona = customerPersona(account);
   const shipment = persona && visible(persona, shipments).find((s) => s.ref === ref);
   if (!persona || !shipment) notFound();
-  const [v] = shipmentViews([shipment]);
-  const alert = customerAlert(v);
 
   return (
     <>
       <Header who={persona.name} role="Customer portal" />
       <main className="mx-auto max-w-5xl px-4 py-6 md:px-6">
         <Link href={`/customer/${account}/shipments`} className="text-accent hover:underline">Your shipments</Link>
-        <ShipmentHead v={v}>{alert && <p className="mt-3 max-w-prose">{alert}</p>}</ShipmentHead>
-        <ShipmentBody v={v}>
-          <section>
-            <h2 className="mb-4 font-semibold">Journey</h2>
-            <Timeline v={v} />
-          </section>
-        </ShipmentBody>
+        <CustomerShipment shipment={shipment} />
       </main>
     </>
   );

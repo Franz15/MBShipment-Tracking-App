@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { shipments } from "@/data";
 import { visible } from "@/domain";
-import { OpsShipment } from "@/ops";
-import { Header, opsPersona, opsTeams } from "@/ui";
+import { Header, OpsShipment } from "@/live";
+import { opsPersona, opsTeams } from "@/ui";
 
 export function generateStaticParams() {
   return opsTeams.flatMap((p) => visible(p, shipments).map((s) => ({ team: p.id, ref: s.ref })));

@@ -1,8 +1,7 @@
-import { Menu, Ship, Truck } from "lucide-react";
-import Link from "next/link";
+import { Ship, Truck } from "lucide-react";
 import { toEvents, type RawEvent } from "./adapters";
-import { accounts, extractions, operators, personas, predictions, rawEvents, sites } from "./data";
-import { DEMO_NOW, view, type Code, type Persona, type Shipment, type ShipmentView, type TrackingEvent } from "./domain";
+import { accounts, extractions, operators, personas, predictions, rawEvents, script, sites } from "./data";
+import { DEMO_NOW, view, type Code, type Persona, type Shipment, type ShipmentView, type Status, type TrackingEvent } from "./domain";
 
 export const customers = personas.filter((p) => p.role === "customer");
 export const customerPersona = (account: string) => customers.find((p) => p.accountIds?.includes(account));
@@ -10,9 +9,30 @@ export const customerPersona = (account: string) => customers.find((p) => p.acco
 export const opsTeams = personas.filter((p) => p.role === "operations");
 export const opsPersona = (team: string) => opsTeams.find((p) => p.id === team);
 
-export const shipmentViews = (list: Shipment[], approved: string[] = []) => {
-  const events = toEvents(rawEvents, extractions, approved);
-  return list.map((s) => view(s, events, predictions[s.ref], DEMO_NOW));
+// Demo state the reviewer changes. Clock and injected events derive from `step`.
+export type Review = "approved" | "rejected";
+export type Demo = { step: number; reviews: Record<string, Review>; uploaded: string[]; open: boolean };
+export const INITIAL: Demo = { step: 0, reviews: {}, uploaded: [], open: false };
+export const touched = (d: Demo) => d.step > 0 || Object.keys(d.reviews).length > 0 || d.uploaded.length > 0;
+
+export function played(d: Demo) {
+  const steps = script.slice(0, d.step);
+  return {
+    now: steps.at(-1)?.now ?? DEMO_NOW,
+    raws: [...rawEvents, ...steps.flatMap((s) => s.raw ?? [])],
+    predictions: Object.assign({}, predictions, ...steps.map((s) => s.predictions)),
+    approved: Object.keys(d.reviews).filter((id) => d.reviews[id] === "approved"),
+  };
+}
+
+// Uploaded documents are keyed "ref/name": the same document name exists on several shipments.
+export const shipmentViews = (list: Shipment[], d: Demo = INITIAL) => {
+  const { now, raws, predictions, approved } = played(d);
+  const events = toEvents(raws, extractions, approved);
+  return list.map((s) => {
+    const documents = s.documents.map((doc) => (d.uploaded.includes(`${s.ref}/${doc.name}`) ? { ...doc, status: "available" as const } : doc));
+    return view({ ...s, documents }, events, predictions[s.ref], now);
+  });
 };
 
 // Formatting. Fixed locale and UTC so server and client render the same text.
@@ -27,8 +47,8 @@ const range = (from: string, to: string) => {
   const [da, ma] = a.split(" ");
   return ma === b.split(" ")[1] ? `${da}–${b}` : `${a} – ${b}`;
 };
-const ago = (iso: string) => {
-  const h = Math.floor((Date.parse(DEMO_NOW) - Date.parse(iso)) / 3_600_000);
+const ago = (iso: string, now: string) => {
+  const h = Math.floor((Date.parse(now) - Date.parse(iso)) / 3_600_000);
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
 };
 
@@ -36,6 +56,9 @@ const nameOf = (list: { id: string; name: string }[]) => (id: string) => list.fi
 export const operatorName = nameOf(operators);
 export const siteName = nameOf(sites);
 export const accountName = nameOf(accounts);
+
+export const personaHref = (p: Persona) =>
+  p.role === "customer" ? `/customer/${p.accountIds![0]}/shipments` : `/operations/${p.id}/exceptions`;
 
 export const perimeter = (p: Persona) =>
   p.siteIds ? `Shipments leaving ${p.siteIds.map(siteName).join(", ")}` : `Shipments for ${p.accountIds!.map(accountName).join(" and ")}`;
@@ -61,10 +84,11 @@ const STATUS = {
   stale: ["No signal", "text-ink-2"],
   delivered: ["Delivered", "text-ink-2"],
 } as const;
+export const statusLabel = (s: Status) => STATUS[s][0];
 
 export function StatusBadge({ v }: { v: ShipmentView }) {
   const [text, color] = STATUS[v.status];
-  const label = v.status === "stale" ? `${text} ${ago(v.silentSince)}` : text;
+  const label = v.status === "stale" ? `${text} ${ago(v.silentSince, v.now)}` : text;
   return (
     <span className={`inline-flex items-center gap-2 font-semibold whitespace-nowrap ${color}`}>
       <span className="size-2 rounded-full bg-current" aria-hidden />
@@ -81,8 +105,13 @@ function stateSentence(v: ShipmentView) {
 }
 
 // Operator emails whose AI reading is still waiting for a human.
-export const pendingEmails = (ref: string, approved: string[] = []) =>
-  rawEvents.filter((r) => r.shipmentRef === ref && extractions[r.id] && !toEvents([r], extractions, approved).length);
+export const pendingEmails = (ref: string, d: Demo = INITIAL) =>
+  played(d).raws.filter((r) => r.shipmentRef === ref && extractions[r.id] && !d.reviews[r.id] && !toEvents([r], extractions).length);
+
+export function latestMessage(items: { operatorId: string; receivedAt: string }[]) {
+  const m = items.toSorted((a, b) => Date.parse(a.receivedAt) - Date.parse(b.receivedAt)).at(-1);
+  return m && `Latest operator message from ${operatorName(m.operatorId)}, sent ${dayTime(m.receivedAt)}.`;
+}
 
 // What ops should do first. A pending email comes first: its facts may change everything else.
 export function nextAction(v: ShipmentView, pending?: RawEvent) {
@@ -106,7 +135,7 @@ export function customerAlert(v: ShipmentView) {
         ? `Customs needs the ${missing.join(" and ")}. We are filing it with the broker.`
         : "Held at customs. We are in contact with the broker.";
     if (e.type === "delivery_failed") return "Delivery attempt failed. We are rebooking it with the carrier.";
-    if (e.type === "stale") return `No update from the carrier for ${ago(v.silentSince)}. We are checking with them.`;
+    if (e.type === "stale") return `No update from the carrier for ${ago(v.silentSince, v.now)}. We are checking with them.`;
     if (e.type === "delay") return `Expected after the promised date of ${day(v.shipment.promisedDate)}.`;
     if (e.type === "at_risk" && v.eta.predicted)
       return `May arrive after the promised date. Calculated estimate ${range(v.eta.predicted.from, v.eta.predicted.to)}.`;
@@ -278,36 +307,6 @@ function Documents({ v, onUpload }: { v: ShipmentView; onUpload?: (name: string)
         </li>
       ))}
     </ul>
-  );
-}
-
-// Mobile folds persona, clock and switch into a native <details> menu.
-export function Header({ who, role }: { who: string; role: string }) {
-  const clock = `Demo clock ${dayTime(DEMO_NOW)} UTC`;
-  const switchLink = <Link href="/" className="text-accent hover:underline">Switch persona</Link>;
-  return (
-    <header className="bg-sunken">
-      <div className="relative mx-auto flex max-w-5xl items-center justify-between gap-x-6 px-4 py-3 md:px-6">
-        <p className="whitespace-nowrap">
-          <span className="font-semibold">Shipment Tracking</span> <span className="ml-2 text-ink-2">{role}</span>
-        </p>
-        <p className="hidden items-baseline gap-x-6 whitespace-nowrap lg:flex">
-          <span className="font-semibold">{who}</span>
-          <span className="text-xs text-ink-2">{clock}</span>
-          {switchLink}
-        </p>
-        <details className="lg:hidden">
-          <summary aria-label="Menu" className="-m-1 flex cursor-pointer list-none p-1 [&::-webkit-details-marker]:hidden">
-            <Menu size={20} aria-hidden />
-          </summary>
-          <div className="absolute inset-x-0 top-full z-10 space-y-1 border-b border-line bg-sunken px-4 pb-3">
-            <p className="font-semibold">{who}</p>
-            <p className="text-xs text-ink-2">{clock}</p>
-            <p className="pt-1">{switchLink}</p>
-          </div>
-        </details>
-      </div>
-    </header>
   );
 }
 

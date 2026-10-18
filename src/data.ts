@@ -222,6 +222,11 @@ export const extractions: Record<string, Extraction> = {
     code: "DELIVERED", kind: "estimate", at: "2026-11-16T12:00:00Z", location: "Milan, IT", confidence: 0.78,
     evidence: "la entrega en Milán quedaría para el lunes 16 a mediodía",
   },
+  // Below AUTO_APPLY: two possible delivery dates; takes the later one.
+  "r2003-5": {
+    code: "DELIVERED", kind: "estimate", at: "2026-11-17T12:00:00Z", location: "Manchester, UK", confidence: 0.72,
+    evidence: "La entrega en Manchester sería el lunes 16 por la tarde o el martes 17 a mediodía",
+  },
 };
 
 export const predictions: Record<string, Prediction> = {
@@ -277,4 +282,42 @@ export const drafts: Record<string, { basis: string; text: string }> = {
     basis: "the Trans Iberia email you approved",
     text: "Buongiorno,\n\nTrans Iberia ci comunica che il ritiro della spedizione SHP-5002 a Valencia non è stato effettuato mercoledì 11 novembre per mancanza di autista. Il ritiro è stato spostato a venerdì 13 novembre e la consegna a Milano è prevista per lunedì 16 novembre a mezzogiorno, due giorni dopo la data concordata del 14 novembre.\n\nCi scusiamo per il disagio.\n\nCordiali saluti,\nIberforge operations",
   },
+  "r2002-5": {
+    basis: "the Atlas Ocean Lines arrival update",
+    text: "Hello,\n\nAtlas Ocean Lines has moved the arrival of the vessel carrying SHP-2002 at Portsmouth to 17 November. With the road leg to Birmingham, delivery moves to 17 November at the earliest, one day after the promised date of 16 November.\n\nWe will let you know if the carrier changes the date again.\n\nKind regards,\nIberforge operations",
+  },
+  "r2003-5": {
+    basis: "the Trans Iberia email you approved",
+    text: "Hello,\n\nTrans Iberia tells us that, with customs clearance over the weekend, they can deliver SHP-2003 to Manchester on Monday 16 November in the afternoon or on Tuesday 17 November at midday. We are planning on the later date, one day after the promised date of 16 November, and will confirm the slot as soon as it is booked.\n\nKind regards,\nIberforge operations",
+  },
 };
+
+// Demo script: operator messages the reviewer plays from the demo panel. Each step sets the demo clock.
+export const script: { now: string; note: string; raw?: RawEvent; predictions?: Record<string, Prediction> }[] = [
+  {
+    now: "2026-11-12T11:00:00Z",
+    note: "Atlas Ocean Lines moves the SHP-2002 arrival at Portsmouth to 17 Nov.",
+    raw: dcsa("r2002-5", "SHP-2002", 1, "2026-11-12T10:55:00Z", { eventClassifierCode: "EST", transportEventTypeCode: "ARRI", eventDateTime: "2026-11-17T06:00:00Z", UNLocationCode: "GBPME" }),
+    predictions: {
+      "SHP-2002": { from: "2026-11-17T12:00:00Z", to: "2026-11-18T10:00:00Z", confidence: "medium", reasons: ["Atlas moved the Portsmouth arrival to 17 Nov", "Portsmouth clearance usually takes 1 day"] },
+    },
+  },
+  {
+    now: "2026-11-12T13:00:00Z",
+    note: "Trans Iberia emails new delivery dates for SHP-2003, in Spanish.",
+    raw: {
+      id: "r2003-5", operatorId: "trans-iberia", shipmentRef: "SHP-2003", leg: 2, receivedAt: "2026-11-12T12:50:00Z", format: "email",
+      payload: {
+        from: "traffic@transiberia.example",
+        subject: "Entrega SHP-2003 Manchester",
+        body: "Hola, el barco del SHP-2003 llega esta noche a Portsmouth, pero con el despacho de aduana del fin de semana no podemos recogerlo hasta el lunes. La entrega en Manchester sería el lunes 16 por la tarde o el martes 17 a mediodía. Os confirmamos en cuanto tengamos hueco. Tráfico Trans Iberia",
+      },
+    },
+  },
+  { now: "2026-11-12T19:00:00Z", note: "No operator messages for 6 hours." },
+  {
+    now: "2026-11-13T09:30:00Z",
+    note: "Trans Iberia reports SHP-1041 delivered in Lyon.",
+    raw: es("r1041-3", "SHP-1041", 0, "ENTREGADO", "13/11/2026 09:10", "Lyon, FR", "2026-11-13T09:15:00Z"),
+  },
+];

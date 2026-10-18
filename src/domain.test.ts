@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { normalize, toEvents, type RawEvent } from "./adapters";
-import { extractions, personas, predictions, rawEvents, shipments } from "./data";
-import { DEMO_NOW, view, visible } from "./domain";
+import { extractions, personas, rawEvents, shipments } from "./data";
+import { DEMO_NOW, visible } from "./domain";
+import { INITIAL, shipmentViews } from "./ui";
 
-const views = (approved: string[] = []) => {
-  const events = toEvents(rawEvents, extractions, approved);
-  return Object.fromEntries(shipments.map((s) => [s.ref, view(s, events, predictions[s.ref], DEMO_NOW)]));
+const views = (step = 0, approved: string[] = []) => {
+  const reviews = Object.fromEntries(approved.map((id) => [id, "approved" as const]));
+  return Object.fromEntries(shipmentViews(shipments, { ...INITIAL, step, reviews }).map((v) => [v.shipment.ref, v]));
 };
 
 describe("adapters", () => {
@@ -64,7 +65,17 @@ describe("shipment view", () => {
   });
 
   it("approving the operator email turns a missed pickup into a confirmed delay", () => {
-    expect(views(["r5002-1"])["SHP-5002"].status).toBe("delayed");
+    expect(views(0, ["r5002-1"])["SHP-5002"].status).toBe("delayed");
+  });
+});
+
+describe("demo script", () => {
+  it("each step changes only what it says", () => {
+    expect(views(1)["SHP-2002"].status).toBe("delayed");
+    expect(views(2)["SHP-2003"].status).toBe("at_risk"); // email below AUTO_APPLY waits for review
+    expect(views(2, ["r2003-5"])["SHP-2003"].status).toBe("delayed");
+    expect(views(3)["SHP-1041"].status).toBe("stale");
+    expect(views(4)["SHP-1041"].status).toBe("delivered");
   });
 });
 

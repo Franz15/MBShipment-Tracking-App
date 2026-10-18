@@ -80,6 +80,7 @@ export type ShipmentException = {
 
 export type ShipmentView = {
   shipment: Shipment;
+  now: string;
   events: TrackingEvent[];
   last?: TrackingEvent;
   silentSince: string;
@@ -140,6 +141,7 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
 
   return {
     shipment: s,
+    now,
     events,
     last,
     silentSince,
