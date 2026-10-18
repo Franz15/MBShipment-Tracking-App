@@ -1,14 +1,17 @@
-import { Ship, Truck } from "lucide-react";
+import { Menu, Ship, Truck } from "lucide-react";
 import Link from "next/link";
-import { toEvents } from "./adapters";
+import { toEvents, type RawEvent } from "./adapters";
 import { accounts, extractions, operators, personas, predictions, rawEvents, sites } from "./data";
 import { DEMO_NOW, view, type Code, type Persona, type Shipment, type ShipmentView, type TrackingEvent } from "./domain";
 
 export const customers = personas.filter((p) => p.role === "customer");
 export const customerPersona = (account: string) => customers.find((p) => p.accountIds?.includes(account));
 
-export const shipmentViews = (list: Shipment[]) => {
-  const events = toEvents(rawEvents, extractions);
+export const opsTeams = personas.filter((p) => p.role === "operations");
+export const opsPersona = (team: string) => opsTeams.find((p) => p.id === team);
+
+export const shipmentViews = (list: Shipment[], approved: string[] = []) => {
+  const events = toEvents(rawEvents, extractions, approved);
   return list.map((s) => view(s, events, predictions[s.ref], DEMO_NOW));
 };
 
@@ -28,14 +31,14 @@ const ago = (iso: string) => {
   const h = Math.floor((Date.parse(DEMO_NOW) - Date.parse(iso)) / 3_600_000);
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
 };
-const daysLate = (iso: string, promised: string) => Math.ceil((Date.parse(iso) - Date.parse(promised)) / 86_400_000);
 
 const nameOf = (list: { id: string; name: string }[]) => (id: string) => list.find((x) => x.id === id)?.name ?? id;
-const operatorName = nameOf(operators);
+export const operatorName = nameOf(operators);
 export const siteName = nameOf(sites);
+export const accountName = nameOf(accounts);
 
 export const perimeter = (p: Persona) =>
-  p.siteIds ? `Shipments leaving ${p.siteIds.map(siteName).join(", ")}` : `Shipments for ${p.accountIds!.map(nameOf(accounts)).join(" and ")}`;
+  p.siteIds ? `Shipments leaving ${p.siteIds.map(siteName).join(", ")}` : `Shipments for ${p.accountIds!.map(accountName).join(" and ")}`;
 
 const CODE: Record<Code, string> = {
   PICKED_UP: "Picked up",
@@ -59,25 +62,40 @@ const STATUS = {
   delivered: ["Delivered", "text-ink-2"],
 } as const;
 
-const silenceSince = (v: ShipmentView) => v.lastUpdate ?? v.shipment.legs[0].plannedDeparture;
-
 export function StatusBadge({ v }: { v: ShipmentView }) {
   const [text, color] = STATUS[v.status];
-  const label = v.status === "stale" ? `${text} ${ago(silenceSince(v))}` : text;
+  const label = v.status === "stale" ? `${text} ${ago(v.silentSince)}` : text;
   return (
-    <span className={`inline-flex items-center gap-1.5 font-semibold whitespace-nowrap ${color}`}>
-      <span className="size-1.5 rounded-full bg-current" aria-hidden />
+    <span className={`inline-flex items-center gap-2 font-semibold whitespace-nowrap ${color}`}>
+      <span className="size-2 rounded-full bg-current" aria-hidden />
       {label}
     </span>
   );
 }
 
 // Where the shipment is, from the last confirmed event only.
-export function stateSentence(v: ShipmentView) {
+function stateSentence(v: ShipmentView) {
   const e = v.last;
   if (!e) return `Booked, pickup planned ${dayTime(v.shipment.legs[0].plannedDeparture)}`;
   return `${CODE[e.code]}, ${e.location} ${e.code === "DELIVERED" ? "on" : "since"} ${dayTime(e.at)}`;
 }
+
+// Operator emails whose AI reading is still waiting for a human.
+export const pendingEmails = (ref: string, approved: string[] = []) =>
+  rawEvents.filter((r) => r.shipmentRef === ref && extractions[r.id] && !toEvents([r], extractions, approved).length);
+
+// What ops should do first. A pending email comes first: its facts may change everything else.
+export function nextAction(v: ShipmentView, pending?: RawEvent) {
+  if (pending) return `Review ${operatorName(pending.operatorId)} email`;
+  const e = v.exceptions[0];
+  if (!e) return undefined;
+  if (e.action === "upload_document") return `Upload ${v.shipment.documents.find((d) => d.status === "missing")!.name.toLowerCase()}`;
+  if (e.action === "contact_operator") return `Contact ${operatorName(v.last?.source.operatorId ?? v.shipment.legs[0].operatorId)}`;
+  return "Send customer update";
+}
+
+export const readAs = (e: Pick<TrackingEvent, "code" | "kind" | "at" | "location">) =>
+  `${e.kind === "estimate" ? "Estimated arrival" : CODE[e.code]}, ${e.location}, ${dayTime(e.at)}`;
 
 // One plain sentence per shipment, from the most severe exception the customer should know about.
 export function customerAlert(v: ShipmentView) {
@@ -88,7 +106,7 @@ export function customerAlert(v: ShipmentView) {
         ? `Customs needs the ${missing.join(" and ")}. We are filing it with the broker.`
         : "Held at customs. We are in contact with the broker.";
     if (e.type === "delivery_failed") return "Delivery attempt failed. We are rebooking it with the carrier.";
-    if (e.type === "stale") return `No update from the carrier for ${ago(silenceSince(v))}. We are checking with them.`;
+    if (e.type === "stale") return `No update from the carrier for ${ago(v.silentSince)}. We are checking with them.`;
     if (e.type === "delay") return `Expected after the promised date of ${day(v.shipment.promisedDate)}.`;
     if (e.type === "at_risk" && v.eta.predicted)
       return `May arrive after the promised date. Calculated estimate ${range(v.eta.predicted.from, v.eta.predicted.to)}.`;
@@ -96,14 +114,14 @@ export function customerAlert(v: ShipmentView) {
 }
 
 const Late = ({ iso, promised }: { iso: string; promised: string }) => {
-  const d = daysLate(iso, promised);
+  const d = Math.ceil((Date.parse(iso) - Date.parse(promised)) / 86_400_000);
   return d > 0 ? <span className="font-semibold text-bad">+{d}d</span> : null;
 };
 
 // Best-known arrival, with the word that says where it comes from.
 export function Expected({ v }: { v: ShipmentView }) {
   if (v.eta.actual) return <>Delivered {day(v.eta.actual)}</>;
-  const iso = v.eta.carrier ?? v.eta.planned;
+  const iso = v.eta.expected;
   return (
     <>
       <span className="text-ink-2">{v.eta.carrier ? "Carrier" : "Planned"}</span> {day(iso)}{" "}
@@ -116,15 +134,14 @@ const Dot = ({ filled }: { filled: boolean }) => (
   <span className={`size-2 shrink-0 rounded-full ${filled ? "bg-ink" : "border border-line-strong"}`} aria-hidden />
 );
 
-const Term = ({ children }: { children: React.ReactNode }) => (
+export const Term = ({ children }: { children: React.ReactNode }) => (
   <dt className="text-xs font-semibold text-ink-2">{children}</dt>
 );
 
 // Promised, then carrier, calculated and actual. Each layer looks different and names its source.
-export function Eta({ v }: { v: ShipmentView }) {
+function Eta({ v }: { v: ShipmentView }) {
   const { promisedDate } = v.shipment;
   const src = v.eta.carrierSource;
-  const expected = v.eta.carrier ?? v.eta.planned;
   const p = v.eta.predicted;
   return (
     <dl className="space-y-4">
@@ -143,7 +160,7 @@ export function Eta({ v }: { v: ShipmentView }) {
             <Term>{src ? "Carrier estimate" : "Planned"}</Term>
             <dd className="flex items-center gap-2">
               <Dot filled={false} />
-              {day(expected)} <Late iso={expected} promised={promisedDate} />
+              {day(v.eta.expected)} <Late iso={v.eta.expected} promised={promisedDate} />
             </dd>
             <dd className="text-xs text-ink-2">
               {src ? `${operatorName(src.operatorId)}, sent ${dayTime(src.receivedAt)}` : "Booking plan, no carrier estimate yet"}
@@ -191,7 +208,7 @@ function steps(v: ShipmentView): Step[] {
     key: `leg-${i}`,
     done: byLeg[i].length > 0,
     title: (
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-2">
         <ModeIcon mode={l.mode} /> {l.from} → {l.to}
       </span>
     ),
@@ -215,7 +232,7 @@ export function Timeline({ v }: { v: ShipmentView }) {
       {steps(v).map((s, i, all) => (
         <li key={s.key} className={`relative pb-6 pl-6 ${i < all.length - 1 ? "border-l" : ""} ${s.done ? "border-ink-2" : "border-line"}`}>
           <span
-            className={`absolute -left-[5px] top-1 size-[9px] rounded-full ${
+            className={`absolute -left-1 top-1 size-2 rounded-full ${
               s.events.some((e) => BAD_CODES.includes(e.code)) ? "bg-bad" : s.done ? "bg-ink-2" : "border border-line-strong bg-white"
             }`}
             aria-hidden
@@ -239,33 +256,94 @@ export function Timeline({ v }: { v: ShipmentView }) {
   );
 }
 
-export function Documents({ v }: { v: ShipmentView }) {
+function Documents({ v, onUpload }: { v: ShipmentView; onUpload?: (name: string) => void }) {
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {v.shipment.documents.map((d) => (
-        <li key={d.name} className="flex justify-between gap-3">
+        <li key={d.name} className="flex flex-wrap items-baseline justify-between gap-x-3">
           {d.name}
-          {d.status === "missing" ? <span className="font-semibold text-bad">Missing</span> : <span className="text-ink-2">Available</span>}
+          {d.status === "available" ? (
+            <span className="text-ink-2">Available</span>
+          ) : (
+            <span className="flex items-baseline gap-3">
+              <span className="font-semibold text-bad">Missing</span>
+              {onUpload && (
+                <label className="-my-1 cursor-pointer py-1 text-accent hover:underline focus-within:outline-2 focus-within:outline-accent">
+                  Upload
+                  <input type="file" className="sr-only" onChange={(e) => e.target.files?.length && onUpload(d.name)} />
+                </label>
+              )}
+            </span>
+          )}
         </li>
       ))}
     </ul>
   );
 }
 
+// Mobile folds persona, clock and switch into a native <details> menu.
 export function Header({ who, role }: { who: string; role: string }) {
+  const clock = `Demo clock ${dayTime(DEMO_NOW)} UTC`;
+  const switchLink = <Link href="/" className="text-accent hover:underline">Switch persona</Link>;
   return (
     <header className="bg-sunken">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-4 py-3 md:px-6">
-        <p>
+      <div className="relative mx-auto flex max-w-5xl items-center justify-between gap-x-6 px-4 py-3 md:px-6">
+        <p className="whitespace-nowrap">
           <span className="font-semibold">Shipment Tracking</span> <span className="ml-2 text-ink-2">{role}</span>
         </p>
-        <p className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+        <p className="hidden items-baseline gap-x-6 whitespace-nowrap lg:flex">
           <span className="font-semibold">{who}</span>
-          <span className="text-xs text-ink-2">Demo clock {dayTime(DEMO_NOW)} UTC</span>
-          <Link href="/" className="text-accent hover:underline">Switch persona</Link>
+          <span className="text-xs text-ink-2">{clock}</span>
+          {switchLink}
         </p>
+        <details className="lg:hidden">
+          <summary aria-label="Menu" className="-m-1 flex cursor-pointer list-none p-1 [&::-webkit-details-marker]:hidden">
+            <Menu size={20} aria-hidden />
+          </summary>
+          <div className="absolute inset-x-0 top-full z-10 space-y-1 border-b border-line bg-sunken px-4 pb-3">
+            <p className="font-semibold">{who}</p>
+            <p className="text-xs text-ink-2">{clock}</p>
+            <p className="pt-1">{switchLink}</p>
+          </div>
+        </details>
       </div>
     </header>
+  );
+}
+
+// Head of a shipment detail page: where it is now, then ref and route.
+export function ShipmentHead({ v, lead, children }: { v: ShipmentView; lead?: string; children?: React.ReactNode }) {
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <h1 className="text-xl font-semibold">{stateSentence(v)}</h1>
+        <StatusBadge v={v} />
+      </div>
+      <p className="mt-1 text-ink-2">
+        <span className="mr-2 font-mono text-ink">{v.shipment.ref}</span>
+        {lead && `${lead}, `}{siteName(v.shipment.originSiteId)} → {v.shipment.destination}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+// Detail body: page-specific main column, arrival and documents on the side.
+export function ShipmentBody({ v, onUpload, children }: { v: ShipmentView; onUpload?: (name: string) => void; children: React.ReactNode }) {
+  return (
+    <div className="mt-8 grid gap-10 md:grid-cols-[1fr_18rem]">
+      <div className="flex flex-col gap-10">{children}</div>
+      <div className="space-y-8">
+        <section>
+          <h2 className="mb-3 font-semibold">Arrival</h2>
+          <Eta v={v} />
+        </section>
+        <section id="documents">
+          <h2 className="mb-3 font-semibold">Documents</h2>
+          <Documents v={v} onUpload={onUpload} />
+        </section>
+      </div>
+    </div>
   );
 }
 

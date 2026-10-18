@@ -16,9 +16,8 @@ export type Code =
   | "DELIVERED"
   | "DELIVERY_FAILED";
 
-export type Site = { id: string; name: string };
-export type Account = { id: string; name: string };
-export type Operator = { id: string; name: string };
+// Sites, accounts and operators.
+export type Named = { id: string; name: string };
 
 export type Leg = {
   mode: Mode;
@@ -73,10 +72,9 @@ export type Persona = {
 };
 
 export type Status = "on_track" | "at_risk" | "delayed" | "on_hold" | "stale" | "delivered";
-export type Action = "notify_customer" | "contact_operator" | "upload_document";
 export type ShipmentException = {
   type: "customs_hold" | "delivery_failed" | "stale" | "delay" | "at_risk" | "missing_document";
-  action: Action;
+  action: "notify_customer" | "contact_operator" | "upload_document";
   severity: 1 | 2 | 3;
 };
 
@@ -84,9 +82,9 @@ export type ShipmentView = {
   shipment: Shipment;
   events: TrackingEvent[];
   last?: TrackingEvent;
-  lastUpdate?: string;
+  silentSince: string;
   status: Status;
-  eta: { planned: string; carrier?: string; carrierSource?: TrackingEvent["source"]; predicted?: Prediction; actual?: string };
+  eta: { planned: string; carrier?: string; expected: string; carrierSource?: TrackingEvent["source"]; predicted?: Prediction; actual?: string };
   exceptions: ShipmentException[];
 };
 
@@ -116,18 +114,19 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
   const actuals = events.filter((e) => e.kind === "actual");
   const last = actuals.at(-1);
   const delivered = actuals.find((e) => e.code === "DELIVERED");
-  const lastUpdate = events.map((e) => e.source.receivedAt).sort((a, b) => t(a) - t(b)).at(-1);
+  // No update yet → silence counts from planned pickup (missed pickup).
+  const silentSince = events.map((e) => e.source.receivedAt).sort((a, b) => t(a) - t(b)).at(-1) ?? s.legs[0].plannedDeparture;
 
   const planned = s.legs.at(-1)!.plannedArrival;
   const est = carrierEta(s, events);
   const carrier = est?.at;
+  const expected = carrier ?? planned;
   const promised = t(s.promisedDate);
 
   const onHold = last?.code === "CUSTOMS_HOLD";
   const mode = s.legs[last?.leg ?? 0].mode;
-  // No update yet → silence counts from planned pickup (missed pickup).
-  const stale = !delivered && t(now) - t(lastUpdate ?? s.legs[0].plannedDeparture) > STALE_AFTER[mode];
-  const late = !delivered && (t(carrier ?? planned) > promised || t(now) > promised);
+  const stale = !delivered && t(now) - t(silentSince) > STALE_AFTER[mode];
+  const late = !delivered && (t(expected) > promised || t(now) > promised);
   const atRisk = !delivered && !!predicted && t(predicted.to) > promised;
   const missingDoc = s.documents.some((d) => d.status === "missing");
 
@@ -143,9 +142,9 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
     shipment: s,
     events,
     last,
-    lastUpdate,
+    silentSince,
     status: delivered ? "delivered" : onHold ? "on_hold" : stale ? "stale" : late ? "delayed" : atRisk ? "at_risk" : "on_track",
-    eta: { planned, carrier, carrierSource: est?.source, predicted, actual: delivered?.at },
+    eta: { planned, carrier, expected, carrierSource: est?.source, predicted, actual: delivered?.at },
     exceptions,
   };
 }

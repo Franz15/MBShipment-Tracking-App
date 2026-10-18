@@ -1,14 +1,14 @@
 // Synthetic data. Every shipment is one demo scenario; all dates sit around DEMO_NOW (Thu 12 Nov 2026, 10:00 UTC).
 import type { Dcsa, Extraction, RawEvent } from "./adapters";
-import type { Account, Leg, Operator, Persona, Prediction, Shipment, Site } from "./domain";
+import type { Leg, Named, Persona, Prediction, Shipment } from "./domain";
 
-export const sites: Site[] = [
+export const sites: Named[] = [
   { id: "zaragoza-plant", name: "Zaragoza plant" },
   { id: "bilbao-plant", name: "Bilbao plant" },
   { id: "valencia-warehouse", name: "Valencia warehouse" },
 ];
 
-export const accounts: Account[] = [
+export const accounts: Named[] = [
   { id: "lyon-subsidiary", name: "Iberforge France" },
   { id: "uk-distributor", name: "Northbridge Distribution" },
   { id: "mexico-subsidiary", name: "Iberforge México" },
@@ -16,7 +16,7 @@ export const accounts: Account[] = [
   { id: "lombarda", name: "Ferramenta Lombarda" },
 ];
 
-export const operators: Operator[] = [
+export const operators: Named[] = [
   { id: "atlas", name: "Atlas Ocean Lines" },
   { id: "trans-iberia", name: "Trans Iberia" },
   { id: "golfo", name: "Transportes del Golfo" },
@@ -233,4 +233,48 @@ export const predictions: Record<string, Prediction> = {
   "SHP-3001": { from: "2026-11-29T06:00:00Z", to: "2026-12-01T18:00:00Z", confidence: "medium", reasons: ["Carrier pushed Veracruz arrival by 7 days", "Inland leg to Monterrey: 2 days"] },
   "SHP-3002": { from: "2026-11-30T08:00:00Z", to: "2026-12-02T18:00:00Z", confidence: "high", reasons: ["Vessel on schedule", "Veracruz clearance usually takes 2 to 3 days"] },
   "SHP-4001": { from: "2026-11-12T11:00:00Z", to: "2026-11-12T13:00:00Z", confidence: "high", reasons: ["Out for delivery in Madrid"] },
+};
+
+// Mock AI: ops briefing per team, built only from the events above.
+export const briefings: Record<string, string[]> = {
+  "valencia-site": [
+    "SHP-4002: delivery in Madrid failed yesterday at 12:05, nobody there to receive it. No update from Trans Iberia since, and the promised date has passed.",
+    "SHP-5002: pickup planned for Wednesday 11 Nov was never confirmed. A Trans Iberia email says it moved to Friday 13 Nov; the reading of that email needs your review.",
+    "SHP-3001: Atlas Ocean Lines moved the Veracruz arrival to 27 Nov. With the inland leg, Monterrey gets it on 29 Nov, 3 days after the promised date.",
+    "SHP-1042 was delivered on 10 Nov. SHP-5001 is booked for pickup tomorrow.",
+  ],
+  "key-accounts": [
+    "SHP-2001: held by HMRC at Portsmouth since 08:15 today. The certificate of origin is missing; Aduanas Levante needs it to file the declaration.",
+    "SHP-3001: Atlas Ocean Lines moved the Veracruz arrival to 27 Nov. With the inland leg, Monterrey gets it on 29 Nov, 3 days after the promised date.",
+    "SHP-2003: the vessel left Bilbao 14 h late. Our calculated estimate is 16 to 17 Nov against a promised 16 Nov; no carrier confirmation yet.",
+    "SHP-2002 and SHP-3002 are on schedule.",
+  ],
+};
+
+// Mock AI: customer update drafts, in the customer's language. Keyed by ref, or by rawId for the draft once that email is approved.
+export const drafts: Record<string, { basis: string; text: string }> = {
+  "SHP-2001": {
+    basis: "the customs broker email and the timeline",
+    text: "Hello,\n\nYour shipment SHP-2001 has been held by UK customs (HMRC) at Portsmouth since 08:15 today, 12 November, because the certificate of origin is missing. We are sending it to our customs broker so they can file the declaration.\n\nWe will confirm a new delivery date as soon as customs releases the goods.\n\nKind regards,\nIberforge operations",
+  },
+  "SHP-2003": {
+    basis: "the vessel departure and our calculated estimate",
+    text: "Hello,\n\nThe vessel carrying SHP-2003 left Bilbao 14 hours behind schedule, so delivery to Manchester may slip past the promised date of 16 November. Our own estimate is 16 to 17 November; the carrier has not confirmed a new date yet.\n\nWe will update you when the vessel reaches Portsmouth.\n\nKind regards,\nIberforge operations",
+  },
+  "SHP-3001": {
+    basis: "the Atlas Ocean Lines arrival update",
+    text: "Hola,\n\nLa naviera Atlas Ocean Lines ha retrasado al 27 de noviembre la llegada a Veracruz del buque con el envío SHP-3001. Con el tramo por carretera hasta Monterrey, la entrega prevista pasa al 29 de noviembre, tres días después de la fecha comprometida del 26 de noviembre.\n\nOs avisaremos si la naviera vuelve a cambiar la fecha.\n\nUn saludo,\nOperaciones Iberforge",
+  },
+  "SHP-4002": {
+    basis: "the Trans Iberia delivery incident",
+    text: "Hola,\n\nAyer, 11 de noviembre, a las 12:05 Trans Iberia intentó entregar el envío SHP-4002 en Madrid y no había nadie para recibirlo. Estamos pidiendo al transportista una nueva fecha de entrega y os la confirmaremos en cuanto la tengamos.\n\nSi queréis indicarnos un horario o una persona de contacto, respondednos a este correo.\n\nUn saludo,\nOperaciones Iberforge",
+  },
+  "SHP-5002": {
+    basis: "the missing pickup confirmation",
+    text: "Buongiorno,\n\nIl ritiro della spedizione SHP-5002 a Valencia, previsto per mercoledì 11 novembre, non risulta ancora confermato dal trasportatore. Lo stiamo verificando con Trans Iberia e vi comunicheremo la nuova data di consegna appena confermata.\n\nCordiali saluti,\nIberforge operations",
+  },
+  "r5002-1": {
+    basis: "the Trans Iberia email you approved",
+    text: "Buongiorno,\n\nTrans Iberia ci comunica che il ritiro della spedizione SHP-5002 a Valencia non è stato effettuato mercoledì 11 novembre per mancanza di autista. Il ritiro è stato spostato a venerdì 13 novembre e la consegna a Milano è prevista per lunedì 16 novembre a mezzogiorno, due giorni dopo la data concordata del 14 novembre.\n\nCi scusiamo per il disagio.\n\nCordiali saluti,\nIberforge operations",
+  },
 };
