@@ -1,14 +1,14 @@
 "use client";
 // Everything that reads the demo state. Pages stay server shells and pass ids and shipments in.
-import { Menu } from "lucide-react";
+import { Menu, Moon } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Fragment, useState, useSyncExternalStore } from "react";
-import { normalize, type RawEvent } from "./adapters";
-import { briefings, drafts, extractions, personas, script, shipments } from "./data";
+import { Fragment, useCallback, useState, useSyncExternalStore } from "react";
+import { AUTO_APPLY, normalize, type RawEvent } from "./adapters";
+import { briefings, chases, drafts, extractions, personas, script, shipments } from "./data";
 import { DEMO_NOW, visible, type Shipment, type ShipmentView, type Status } from "./domain";
 import {
-  accountName, customerAlert, day, dayTime, etaSource, Expected, INITIAL, latestMessage, nextAction, operatorName, pendingEmails, personaHref,
+  accountName, button, carrierScope, customerAlert, day, dayTime, etaSource, Expected, expectedText, INITIAL, latestMessage, nextAction, operatorName, pendingEmails, personaHref,
   played, readAs, ShipmentBody, ShipmentHead, shipmentViews, siteName, statusLabel, StatusBadge, td, Term, th, Timeline, touched,
   type Demo, type Review,
 } from "./ui";
@@ -35,8 +35,9 @@ function subscribe(fn: () => void) {
 
 if (typeof window !== "undefined")
   window.addEventListener("storage", (e) => {
-    if (e.key !== KEY) return;
-    state = { ...read(), open: state?.open ?? false };
+    if (e.key === "theme" && e.newValue) document.documentElement.dataset.theme = e.newValue;
+    else if (e.key === KEY) state = { ...read(), open: state?.open ?? false };
+    else return;
     listeners.forEach((fn) => fn());
   });
 
@@ -50,11 +51,40 @@ function setDemo(next: Demo) {
 
 const useDemo = () => useSyncExternalStore(subscribe, () => (state ??= read()), () => INITIAL);
 
+// Saved choice or system theme before first paint; text/plain on the client so React does not warn.
+export const ThemeScript = () => (
+  <script
+    type={typeof window === "undefined" ? "text/javascript" : "text/plain"}
+    suppressHydrationWarning
+    dangerouslySetInnerHTML={{
+      __html: `try{document.documentElement.dataset.theme=localStorage.getItem("theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch(e){}`,
+    }}
+  />
+);
+
+// The theme lives on <html data-theme>; it changes only here and in the storage listener, which notify the same store.
+const useTheme = () => useSyncExternalStore(subscribe, () => document.documentElement.dataset.theme, () => undefined);
+
+export function ThemeToggle() {
+  const dark = useTheme() === "dark";
+  const toggle = () => {
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem("theme", next);
+    } catch {}
+    listeners.forEach((fn) => fn());
+  };
+  return (
+    <button type="button" aria-label="Dark theme" aria-pressed={dark} onClick={toggle} className="-m-1 p-1 hover:text-accent aria-pressed:text-accent">
+      <Moon size={20} aria-hidden />
+    </button>
+  );
+}
+
 // MapLibre needs window and weighs ~230 KB gzip: client only, fetched on customer detail pages.
 const RouteMap = dynamic(() => import("./map"), { ssr: false });
 
-const button =
-  "border border-ink-2 px-3 py-1 font-semibold hover:border-ink active:bg-line disabled:cursor-not-allowed disabled:border-line disabled:text-ink-2";
 
 // Stable ref callback: runs once on mount, taking focus from a control that just disappeared or got disabled.
 const focusOnMount = (el: HTMLElement | null) => el?.focus();
@@ -63,7 +93,7 @@ const focusOnMount = (el: HTMLElement | null) => el?.focus();
 export function Header({ who, role }: { who: string; role: string }) {
   const d = useDemo();
   const clock = `Demo clock ${dayTime(played(d).now)} UTC`;
-  const switchLink = <Link href="/" className="text-accent hover:underline">Switch persona</Link>;
+  const switchLink = <Link href="/" className="py-1 text-accent hover:underline">Switch persona</Link>;
   return (
     <header className="bg-sunken">
       <div className="relative mx-auto flex max-w-5xl items-center justify-between gap-x-6 px-4 py-3 md:px-6">
@@ -77,9 +107,10 @@ export function Header({ who, role }: { who: string; role: string }) {
           <button type="button" aria-expanded={d.open} aria-controls="demo" onClick={() => setDemo({ ...d, open: !d.open })} className={button}>
             {d.open ? "Hide demo" : "Run demo"}
           </button>
+          <ThemeToggle />
           <span className="hidden lg:inline">{switchLink}</span>
           <details className="lg:hidden">
-            <summary aria-label="Menu" className="-m-1 flex cursor-pointer list-none p-1 [&::-webkit-details-marker]:hidden">
+            <summary aria-label="Menu" className="-m-1 flex cursor-pointer list-none p-1 hover:text-accent [&::-webkit-details-marker]:hidden">
               <Menu size={20} aria-hidden />
             </summary>
             <div className="absolute inset-x-0 top-full z-10 space-y-1 border-b border-line bg-sunken px-4 pb-3">
@@ -127,7 +158,7 @@ function DemoStrip({ d }: { d: Demo }) {
   return (
     <section id="demo" aria-label="Demo" className="mx-auto grid max-w-5xl gap-x-10 gap-y-4 px-4 pb-4 md:grid-cols-2 md:px-6">
       <div>
-        <h2 className="font-semibold">Demo</h2>
+        <h2 className="text-base font-semibold">Demo</h2>
         <p className="max-w-prose text-ink-2">
           Scripted operator messages for this prototype, not part of the product. Each one moves the demo clock and runs through the same
           pipeline as the rest of the data. In production they arrive by API, EDI and email.
@@ -171,6 +202,10 @@ function DemoStrip({ d }: { d: Demo }) {
   );
 }
 
+// Section of the ops detail page where the next action is done.
+const TARGET: Record<string, string> = { upload_document: "documents", notify_customer: "update", contact_operator: "contact" };
+const actionTarget = (v: ShipmentView, pending: RawEvent[]) => (pending.length ? "messages" : TARGET[v.exceptions[0]?.action ?? ""]);
+
 // Each view with the status it had before the last demo step, when that changed.
 function withWas(list: Shipment[], d: Demo) {
   const views = shipmentViews(list, d);
@@ -178,16 +213,10 @@ function withWas(list: Shipment[], d: Demo) {
   return views.map((v, i) => ({ v, was: before[i].status !== v.status ? before[i].status : undefined }));
 }
 
-function useRows(list: Shipment[]) {
-  const d = useDemo();
-  return { d, rows: withWas(list, d) };
-}
-
 const Was = ({ status }: { status?: Status }) => status && <span className="block text-xs text-ink-2">Was {statusLabel(status)}</span>;
 
 export function CustomerList({ account, list }: { account: string; list: Shipment[] }) {
-  const { rows: all } = useRows(list);
-  const rows = all.map((r) => ({ ...r, alert: customerAlert(r.v) })).toSorted((a, b) => +!a.alert - +!b.alert);
+  const rows = withWas(list, useDemo()).map((r) => ({ ...r, alert: customerAlert(r.v) })).toSorted((a, b) => +!a.alert - +!b.alert);
   const flagged = rows.filter((r) => r.alert).length;
   return (
     <>
@@ -241,7 +270,9 @@ function Ask({ account, views }: { account: string; views: ShipmentView[] }) {
     <Link href={`/customer/${account}/shipments/${v.shipment.ref}`} className="font-mono text-accent hover:underline">{v.shipment.ref}</Link>
   );
   const late = views.filter((v) => v.exceptions.some((e) => e.type === "delay" || e.type === "at_risk" || e.type === "stale"));
-  const next = views.filter((v) => !v.eta.actual).toSorted((a, b) => Date.parse(a.eta.expected) - Date.parse(b.eta.expected))[0];
+  const next = views
+    .filter((v) => !v.eta.actual && v.eta.expected)
+    .toSorted((a, b) => Date.parse(a.eta.expected!) - Date.parse(b.eta.expected!))[0];
   const latest = views
     .flatMap((v) => v.events.map((e) => ({ v, e })))
     .toSorted((a, b) => Date.parse(a.e.source.receivedAt) - Date.parse(b.e.source.receivedAt))
@@ -257,7 +288,7 @@ function Ask({ account, views }: { account: string; views: ShipmentView[] }) {
       "What arrives next?",
       next ? (
         <>
-          {ref(next)} to {next.shipment.destination}, expected {day(next.eta.expected)}. {etaSource(next)}. {customerAlert(next)}
+          {ref(next)} to {next.shipment.destination}, expected {expectedText(next)}. {etaSource(next)}. {next.eta.basis === "carrier" && carrierScope(next)} {customerAlert(next)}
         </>
       ) : (
         `Nothing. All ${views.length} shipments are delivered.`
@@ -275,7 +306,7 @@ function Ask({ account, views }: { account: string; views: ShipmentView[] }) {
   ];
   return (
     <section className="mt-8 max-w-prose">
-      <h2 className="mb-3 font-semibold">Questions about your shipments</h2>
+      <h2 className="mb-3 text-base font-semibold">Questions about your shipments</h2>
       <div className="space-y-2">
         {qa.map(([q, a]) => (
           <details key={q} name="ask" className="group">
@@ -294,6 +325,19 @@ function Ask({ account, views }: { account: string; views: ShipmentView[] }) {
 export function CustomerShipment({ shipment }: { shipment: Shipment }) {
   const [v] = shipmentViews([shipment], useDemo());
   const alert = customerAlert(v);
+  const theme = useTheme();
+  // MapLibre loads once the map scrolls into view: below the fold on phones, it stays off the critical path.
+  const [mapOn, setMapOn] = useState(false);
+  const watchMap = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      setMapOn(true);
+      io.disconnect();
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   return (
     <>
       <ShipmentHead v={v}>{alert && <p className="mt-3 max-w-prose">{alert}</p>}</ShipmentHead>
@@ -301,19 +345,23 @@ export function CustomerShipment({ shipment }: { shipment: Shipment }) {
         v={v}
         side={
           <section>
-            <h2 className="mb-3 font-semibold">Map</h2>
-            <div className="aspect-[4/3] md:aspect-square" aria-hidden>
-              <RouteMap key={v.events.filter((e) => e.kind === "actual").map((e) => e.source.rawId).join()} v={v} />
+            <h2 className="mb-3 text-base font-semibold">Map</h2>
+            <div ref={watchMap} className="relative aspect-[4/3] bg-sunken md:aspect-square" aria-hidden>
+              {/* Covered by the opaque tiles once they load. */}
+              <span className="absolute inset-0 grid place-items-center text-xs text-ink-2">Loading map…</span>
+              {mapOn && <RouteMap key={`${theme} ${v.events.filter((e) => e.kind === "actual").map((e) => e.source.rawId).join()}`} v={v} />}
             </div>
             <p className="mt-2 text-xs text-ink-2">
-              Dots: confirmed by tracking events. Line: booking plan. No live vessel position.{" "}
-              <a href="https://www.openstreetmap.org/copyright" className="text-accent hover:underline">© OpenStreetMap contributors</a>
+              Solid: confirmed by tracking events. Dotted: planned, still to go. Ring: destination. No live vessel position.{" "}
+              <a href="https://openfreemap.org" className="text-accent underline">OpenFreeMap</a>{" "}
+              <a href="https://www.openmaptiles.org/" className="text-accent underline">© OpenMapTiles</a>, data{" "}
+              <a href="https://www.openstreetmap.org/copyright" className="text-accent underline">© OpenStreetMap contributors</a>
             </p>
           </section>
         }
       >
         <section>
-          <h2 className="mb-4 font-semibold">Journey</h2>
+          <h2 className="mb-4 text-base font-semibold">Journey</h2>
           <Timeline v={v} />
         </section>
       </ShipmentBody>
@@ -322,9 +370,12 @@ export function CustomerShipment({ shipment }: { shipment: Shipment }) {
 }
 
 export function OpsExceptions({ team, list }: { team: string; list: Shipment[] }) {
-  const { d, rows: all } = useRows(list);
-  const rows = all
-    .map((r) => ({ ...r, action: nextAction(r.v, pendingEmails(r.v.shipment.ref, d)[0]) }))
+  const d = useDemo();
+  const rows = withWas(list, d)
+    .map((r) => {
+      const pending = pendingEmails(r.v.shipment.ref, d);
+      return { ...r, action: nextAction(r.v, pending[0]), target: actionTarget(r.v, pending) };
+    })
     .toSorted((a, b) => (b.v.exceptions[0]?.severity ?? 0) - (a.v.exceptions[0]?.severity ?? 0));
   const open = rows.filter((r) => r.action).length;
   const refs = list.map((s) => s.ref);
@@ -348,7 +399,7 @@ export function OpsExceptions({ team, list }: { team: string; list: Shipment[] }
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ v, was, action }) => (
+          {rows.map(({ v, was, action, target }) => (
             <tr key={v.shipment.ref} className="border-b border-line">
               <td className={td}>
                 <Link href={`/operations/${team}/shipments/${v.shipment.ref}`} className="font-mono text-accent hover:underline">
@@ -360,7 +411,13 @@ export function OpsExceptions({ team, list }: { team: string; list: Shipment[] }
               <td className={`${td} hidden text-right lg:table-cell`}>{day(v.shipment.promisedDate)}</td>
               <td className={`${td} hidden text-right sm:table-cell`}><Expected v={v} /></td>
               <td className={td}><StatusBadge v={v} /><Was status={was} /></td>
-              <td className={`${td} whitespace-normal!`}>{action ?? <span className="text-ink-2">None</span>}</td>
+              <td className={`${td} whitespace-normal!`}>
+                {!action ? (
+                  <span className="text-ink-2">None</span>
+                ) : (
+                  <Link href={`/operations/${team}/shipments/${v.shipment.ref}#${target}`} className="text-accent hover:underline">{action}</Link>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -380,15 +437,17 @@ export function OpsShipment({ shipment }: { shipment: Shipment }) {
   const [v] = shipmentViews([shipment], d);
   const pending = pendingEmails(shipment.ref, d);
   const action = nextAction(v, pending[0]);
-  const top = v.exceptions[0]?.action;
-  const target = pending.length ? "messages" : top === "upload_document" ? "documents" : top === "notify_customer" ? "update" : undefined;
+  const target = actionTarget(v, pending);
+  const operator = operatorName(v.last?.source.operatorId ?? shipment.legs[0].operatorId);
+  // No drafts while an operator email waits for review: they would be written without its facts.
+  const chase = !pending.length && v.exceptions[0]?.action === "contact_operator" && chases[shipment.ref];
   const draftKey = v.events.map((e) => e.source.rawId).findLast((id) => drafts[id]) ?? shipment.ref;
-  const draft = drafts[draftKey];
+  const draft = !pending.length && drafts[draftKey];
   const to = accountName(shipment.accountId);
 
   const messages = (
     <section id="messages">
-      <h2 className="mb-1 font-semibold">Operator messages</h2>
+      <h2 className="mb-1 text-base font-semibold">Operator messages</h2>
       <p className="mb-4 text-ink-2">As received, newest first.</p>
       <ul className="space-y-6">
         {played(d)
@@ -413,14 +472,15 @@ export function OpsShipment({ shipment }: { shipment: Shipment }) {
       <ShipmentHead v={v} lead={to}>
         <dl className="mt-3">
           <Term>Next action</Term>
-          <dd>{!action ? "None" : target ? <a href={`#${target}`} className="text-accent hover:underline">{action}</a> : action}</dd>
+          <dd>{!action ? "None" : target ? <a href={`#${target}`} className="py-1 text-accent hover:underline">{action}</a> : action}</dd>
         </dl>
       </ShipmentHead>
       <ShipmentBody v={v} onUpload={(name) => setDemo({ ...d, uploaded: [...d.uploaded, `${shipment.ref}/${name}`] })}>
         {reviewFirst && messages}
-        {draft && <Draft key={draftKey} draft={draft} to={to} />}
+        {chase && <Draft id="contact" title={`Message to ${operator}`} key={`chase-${shipment.ref}`} draft={chase} to={operator} />}
+        {draft && <Draft id="update" title="Customer update" key={draftKey} draft={draft} to={to} />}
         <section>
-          <h2 className="mb-4 font-semibold">Journey</h2>
+          <h2 className="mb-4 text-base font-semibold">Journey</h2>
           <Timeline v={v} />
         </section>
         {!reviewFirst && messages}
@@ -429,12 +489,12 @@ export function OpsShipment({ shipment }: { shipment: Shipment }) {
   );
 }
 
-function Draft({ draft, to }: { draft: { basis: string; text: string }; to: string }) {
+function Draft({ id, title, draft, to }: { id: string; title: string; draft: { basis: string; text: string }; to: string }) {
   const [reviewed, setReviewed] = useState(false);
   const [sent, setSent] = useState(false);
   return (
-    <section id="update">
-      <h2 className="mb-3 font-semibold">Customer update</h2>
+    <section id={id}>
+      <h2 className="mb-3 text-base font-semibold">{title}</h2>
       <div className="border border-dashed border-line-strong px-4 py-3">
         <p className="text-xs text-ink-2">Drafted by AI from {draft.basis}. Review before sending.</p>
         <textarea
@@ -442,14 +502,17 @@ function Draft({ draft, to }: { draft: { basis: string; text: string }; to: stri
           defaultValue={draft.text}
           rows={9}
           readOnly={sent}
-          className="mt-2 w-full border border-line-strong bg-white p-2 read-only:text-ink-2"
+          // Drafts are in the recipient's language: the browser's spellchecker would underline every line.
+          spellCheck={false}
+          // Grows to the whole draft where supported; elsewhere, 9 rows and a scrollbar.
+          className="mt-2 w-full border border-line-strong bg-field p-2 field-sizing-content read-only:text-ink-2"
         />
         {sent ? (
           <p role="status" className="mt-2 font-semibold text-ok">Marked as sent to {to}. Nothing is emailed in this prototype.</p>
         ) : (
           <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-2 py-1">
-              <input type="checkbox" className="size-[15px]" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+              <input type="checkbox" className="size-4" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
               I reviewed this draft
             </label>
             <button type="button" disabled={!reviewed} onClick={() => setSent(true)} className={button}>
@@ -467,7 +530,7 @@ const OUTCOME: Record<Review, string> = {
   rejected: "Rejected. Kept as raw, not applied.",
 };
 
-const level = (c: number) => (c >= 0.9 ? "High" : c >= 0.7 ? "Medium" : "Low");
+const level = (c: number) => (c >= AUTO_APPLY ? "High" : c >= 0.7 ? "Medium" : "Low");
 
 function Message({ r, state, onReview }: { r: RawEvent; state: Review | "pending" | "applied"; onReview: (s: Review) => void }) {
   const x = extractions[r.id];
@@ -506,7 +569,7 @@ function Message({ r, state, onReview }: { r: RawEvent; state: Review | "pending
         </div>
       )}
       <details className="mt-2 text-xs text-ink-2">
-        <summary className="cursor-pointer py-1">Raw payload ({r.format})</summary>
+        <summary className="cursor-pointer py-1 hover:text-ink">Raw payload ({r.format})</summary>
         <pre className="overflow-x-auto pl-4 font-mono">{JSON.stringify(r.payload, null, 2)}</pre>
       </details>
     </li>

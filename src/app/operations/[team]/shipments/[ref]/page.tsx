@@ -9,6 +9,10 @@ export function generateStaticParams() {
   return opsTeams.flatMap((p) => visible(p, shipments).map((s) => ({ team: p.id, ref: s.ref })));
 }
 
+export async function generateMetadata({ params }: PageProps<"/operations/[team]/shipments/[ref]">) {
+  return { title: (await params).ref };
+}
+
 export default async function Page({ params }: PageProps<"/operations/[team]/shipments/[ref]">) {
   const { team, ref } = await params;
   const persona = opsPersona(team);
@@ -19,7 +23,7 @@ export default async function Page({ params }: PageProps<"/operations/[team]/shi
     <>
       <Header who={persona.name} role="Operations" />
       <main className="mx-auto max-w-5xl px-4 py-6 md:px-6">
-        <Link href={`/operations/${team}/exceptions`} className="text-accent hover:underline">Exceptions</Link>
+        <Link href={`/operations/${team}/exceptions`} className="py-1 text-accent hover:underline">Exceptions</Link>
         <OpsShipment shipment={shipment} />
       </main>
     </>

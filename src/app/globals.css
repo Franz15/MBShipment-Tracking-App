@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @theme {
+  --color-surface: #fff;
+  --color-field: #fff;
   --color-sunken: #f1f3f5;
   --color-line: #d9dde3;
   --color-line-strong: #8a929e;
@@ -10,6 +12,24 @@
   --color-ok: #1d6b36;
   --color-warn: #8a5100;
   --color-bad: #b3261e;
+  --color-stale: #6d3fb5;
+}
+
+/* Same roles, re-tuned for a dark surface. data-theme is set before first paint (layout script). */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #121417;
+  --color-field: #1b1f24;
+  --color-sunken: #1b1f24;
+  --color-line: #2c323a;
+  --color-line-strong: #6b7480;
+  --color-ink: #e6e8eb;
+  --color-ink-2: #a3abb5;
+  --color-accent: #8aa8ff;
+  --color-ok: #5cc27e;
+  --color-warn: #e0a54a;
+  --color-bad: #ff7a70;
+  --color-stale: #b79cf0;
 }
 
 :focus-visible {

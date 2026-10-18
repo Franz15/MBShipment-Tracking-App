@@ -230,14 +230,14 @@ export const extractions: Record<string, Extraction> = {
 };
 
 export const predictions: Record<string, Prediction> = {
-  "SHP-1041": { from: "2026-11-13T09:00:00Z", to: "2026-11-13T14:00:00Z", confidence: "high", reasons: ["Road leg on schedule", "Lane history: usually on plan"] },
-  "SHP-1043": { from: "2026-11-12T15:00:00Z", to: "2026-11-13T12:00:00Z", confidence: "low", reasons: ["No operator update since the Toulouse checkpoint", "Range based on plan only"] },
-  "SHP-2001": { from: "2026-11-14T10:00:00Z", to: "2026-11-15T16:00:00Z", confidence: "medium", reasons: ["Customs hold: release usually 1 to 2 days after documents are filed", "Last-mile slot must be rebooked"] },
-  "SHP-2002": { from: "2026-11-14T12:00:00Z", to: "2026-11-15T10:00:00Z", confidence: "high", reasons: ["Vessel on schedule", "Portsmouth clearance usually takes 1 day"] },
-  "SHP-2003": { from: "2026-11-16T10:00:00Z", to: "2026-11-17T12:00:00Z", confidence: "medium", reasons: ["Vessel left Bilbao 14 h behind schedule", "Late Thursday arrival at Portsmouth: clearance likely slips past the weekend"] },
-  "SHP-3001": { from: "2026-11-29T06:00:00Z", to: "2026-12-01T18:00:00Z", confidence: "medium", reasons: ["Carrier pushed Veracruz arrival by 7 days", "Inland leg to Monterrey: 2 days"] },
-  "SHP-3002": { from: "2026-11-30T08:00:00Z", to: "2026-12-02T18:00:00Z", confidence: "high", reasons: ["Vessel on schedule", "Veracruz clearance usually takes 2 to 3 days"] },
-  "SHP-4001": { from: "2026-11-12T11:00:00Z", to: "2026-11-12T13:00:00Z", confidence: "high", reasons: ["Out for delivery in Madrid"] },
+  "SHP-1041": { from: "2026-11-13T09:00:00Z", to: "2026-11-13T14:00:00Z", confidence: "high", reasons: ["Road leg on schedule", "Lane history: usually on plan"], sample: 64, updates: "Updates with the next Trans Iberia checkpoint." },
+  "SHP-1043": { from: "2026-11-12T15:00:00Z", to: "2026-11-13T12:00:00Z", confidence: "low", reasons: ["No operator update since the Toulouse checkpoint", "Range based on plan only"], sample: 41, updates: "Updates when Trans Iberia reports a new checkpoint." },
+  "SHP-2001": { from: "2026-11-14T10:00:00Z", to: "2026-11-15T16:00:00Z", confidence: "medium", reasons: ["Customs hold: release usually 1 to 2 days after documents are filed", "Last-mile slot must be rebooked"], sample: 23, updates: "Updates when customs releases the shipment." },
+  "SHP-2002": { from: "2026-11-14T12:00:00Z", to: "2026-11-15T10:00:00Z", confidence: "high", reasons: ["Vessel on schedule", "Portsmouth clearance usually takes 1 day"], sample: 37, updates: "Updates when Atlas confirms the Portsmouth arrival." },
+  "SHP-2003": { from: "2026-11-16T10:00:00Z", to: "2026-11-17T12:00:00Z", confidence: "medium", reasons: ["Vessel left Bilbao 14 h behind schedule", "Late Thursday arrival at Portsmouth: clearance likely slips past the weekend"], sample: 37, updates: "Updates when Trans Iberia books the Manchester delivery slot." },
+  "SHP-3001": { from: "2026-11-29T06:00:00Z", to: "2026-12-01T18:00:00Z", confidence: "medium", reasons: ["Carrier pushed Veracruz arrival by 7 days", "Inland leg to Monterrey: 2 days"], sample: 18, updates: "Updates when Atlas confirms the Veracruz arrival." },
+  "SHP-3002": { from: "2026-11-30T08:00:00Z", to: "2026-12-02T18:00:00Z", confidence: "high", reasons: ["Vessel on schedule", "Veracruz clearance usually takes 2 to 3 days"], sample: 18, updates: "Updates when Atlas confirms the Veracruz arrival." },
+  "SHP-4001": { from: "2026-11-12T11:00:00Z", to: "2026-11-12T13:00:00Z", confidence: "high", reasons: ["Out for delivery in Madrid"], sample: 112, updates: "Updates on delivery." },
 };
 
 // Mock AI: ops briefing per team, built only from the events above.
@@ -292,6 +292,22 @@ export const drafts: Record<string, { basis: string; text: string }> = {
   },
 };
 
+// Mock AI: messages to the operator when the next action is to contact them, in the operator's language.
+export const chases: Record<string, { basis: string; text: string }> = {
+  "SHP-2001": {
+    basis: "the customs hold and the document you uploaded",
+    text: "Hola,\n\nYa tenéis en el expediente el certificado de origen del envío SHP-2001, retenido en Portsmouth desde el 12 de noviembre. ¿Podéis presentar la declaración a HMRC y avisarnos en cuanto liberen la mercancía?\n\nGracias,\nOperaciones Iberforge",
+  },
+  "SHP-4002": {
+    basis: "the failed delivery attempt and the time since the last update",
+    text: "Hola,\n\nEl envío SHP-4002 tuvo un intento de entrega fallido en Madrid el 11 de noviembre a las 12:05 y desde entonces no tenemos noticias. ¿Podéis confirmarnos la nueva fecha de entrega?\n\nGracias,\nOperaciones Iberforge",
+  },
+  "SHP-5002": {
+    basis: "the planned pickup and the Trans Iberia email",
+    text: "Hola,\n\nHemos recibido vuestro correo sobre la recogida del envío SHP-5002 en Valencia, prevista el 11 de noviembre. ¿Nos confirmáis por escrito la nueva fecha de recogida y la de entrega en Milán?\n\nGracias,\nOperaciones Iberforge",
+  },
+};
+
 // Demo script: operator messages the reviewer plays from the demo panel. Each step sets the demo clock.
 export const script: { now: string; note: string; raw?: RawEvent; predictions?: Record<string, Prediction> }[] = [
   {
@@ -299,7 +315,7 @@ export const script: { now: string; note: string; raw?: RawEvent; predictions?: 
     note: "Atlas Ocean Lines moves the SHP-2002 arrival at Portsmouth to 17 Nov.",
     raw: dcsa("r2002-5", "SHP-2002", 1, "2026-11-12T10:55:00Z", { eventClassifierCode: "EST", transportEventTypeCode: "ARRI", eventDateTime: "2026-11-17T06:00:00Z", UNLocationCode: "GBPME" }),
     predictions: {
-      "SHP-2002": { from: "2026-11-17T12:00:00Z", to: "2026-11-18T10:00:00Z", confidence: "medium", reasons: ["Atlas moved the Portsmouth arrival to 17 Nov", "Portsmouth clearance usually takes 1 day"] },
+      "SHP-2002": { from: "2026-11-17T12:00:00Z", to: "2026-11-18T10:00:00Z", confidence: "medium", reasons: ["Atlas moved the Portsmouth arrival to 17 Nov", "Portsmouth clearance usually takes 1 day"], sample: 37, updates: "Updates when Atlas confirms the Portsmouth arrival." },
     },
   },
   {

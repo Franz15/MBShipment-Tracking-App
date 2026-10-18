@@ -9,6 +9,10 @@ export function generateStaticParams() {
   return customers.flatMap((p) => visible(p, shipments).map((s) => ({ account: p.accountIds![0], ref: s.ref })));
 }
 
+export async function generateMetadata({ params }: PageProps<"/customer/[account]/shipments/[ref]">) {
+  return { title: (await params).ref };
+}
+
 export default async function Page({ params }: PageProps<"/customer/[account]/shipments/[ref]">) {
   const { account, ref } = await params;
   const persona = customerPersona(account);
@@ -19,7 +23,7 @@ export default async function Page({ params }: PageProps<"/customer/[account]/sh
     <>
       <Header who={persona.name} role="Customer portal" />
       <main className="mx-auto max-w-5xl px-4 py-6 md:px-6">
-        <Link href={`/customer/${account}/shipments`} className="text-accent hover:underline">Your shipments</Link>
+        <Link href={`/customer/${account}/shipments`} className="py-1 text-accent hover:underline">Your shipments</Link>
         <CustomerShipment shipment={shipment} />
       </main>
     </>

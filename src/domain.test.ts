@@ -64,6 +64,17 @@ describe("shipment view", () => {
     expect(views()["SHP-3001"].eta.carrier).toBe("2026-11-29T06:00:00.000Z"); // Veracruz 27th + 2-day inland leg
   });
 
+  it("never shows a booking plan that no longer holds as the expected date", () => {
+    const basis = (v: ReturnType<typeof views>[string]) => v.eta.basis;
+    expect(basis(views()["SHP-2001"])).toBe("calculated"); // held at customs
+    expect(basis(views()["SHP-1043"])).toBe("calculated"); // no signal
+    expect(views()["SHP-5002"].eta.expected).toBeUndefined(); // missed pickup, no range
+    expect(basis(views()["SHP-2003"])).toBe("calculated"); // carrier only covers Portsmouth: a floor, not the date
+    expect(views()["SHP-2003"].eta.carrier).toBe("2026-11-13T06:00:00.000Z");
+    expect(basis(views(2, ["r2003-5"])["SHP-2003"])).toBe("carrier"); // last-leg estimate is the date
+    expect(basis(views(4)["SHP-2003"])).toBe("calculated"); // Atlas estimate passed with no arrival
+  });
+
   it("approving the operator email turns a missed pickup into a confirmed delay", () => {
     expect(views(0, ["r5002-1"])["SHP-5002"].status).toBe("delayed");
   });

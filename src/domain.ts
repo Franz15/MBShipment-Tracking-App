@@ -61,6 +61,8 @@ export type Prediction = {
   to: string;
   confidence: "low" | "medium" | "high";
   reasons: string[];
+  sample: number; // past shipments on the same lane the range is built from
+  updates: string; // the next fact that would move the range
 };
 
 export type Persona = {
@@ -85,7 +87,17 @@ export type ShipmentView = {
   last?: TrackingEvent;
   silentSince: string;
   status: Status;
-  eta: { planned: string; carrier?: string; expected: string; carrierSource?: TrackingEvent["source"]; predicted?: Prediction; actual?: string };
+  // expected = best date we can stand behind, `basis` says where it comes from; none = unknown.
+  eta: {
+    planned: string;
+    planHolds: boolean;
+    carrier?: string;
+    carrierEstimate?: TrackingEvent;
+    expected?: string;
+    basis?: "carrier" | "planned" | "calculated";
+    predicted?: Prediction;
+    actual?: string;
+  };
   exceptions: ShipmentException[];
 };
 
@@ -99,15 +111,15 @@ export const visible = (p: Persona, shipments: Shipment[]) =>
     (s) => (p.accountIds?.includes(s.accountId) ?? true) && (p.siteIds?.includes(s.originSiteId) ?? true),
   );
 
-// Latest operator estimate for a leg's arrival, shifted by the planned duration of the legs after it.
-function carrierEta(s: Shipment, events: TrackingEvent[]) {
+// Latest operator estimate, plus the planned length of the legs after it. Expired once its date passes.
+function carrierEta(s: Shipment, events: TrackingEvent[], now: string) {
   const est = events
     .filter((e) => e.kind === "estimate" && e.leg !== undefined)
     .sort((a, b) => t(a.source.receivedAt) - t(b.source.receivedAt))
     .at(-1);
-  if (!est) return undefined;
+  if (!est || t(est.at) <= t(now)) return undefined;
   const rest = s.legs.slice(est.leg! + 1).reduce((sum, l) => sum + t(l.plannedArrival) - t(l.plannedDeparture), 0);
-  return { at: new Date(t(est.at) + rest).toISOString(), source: est.source };
+  return { at: new Date(t(est.at) + rest).toISOString(), event: est };
 }
 
 export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Prediction | undefined, now: string): ShipmentView {
@@ -119,15 +131,29 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
   const silentSince = events.map((e) => e.source.receivedAt).sort((a, b) => t(a) - t(b)).at(-1) ?? s.legs[0].plannedDeparture;
 
   const planned = s.legs.at(-1)!.plannedArrival;
-  const est = carrierEta(s, events);
+  const est = carrierEta(s, events, now);
   const carrier = est?.at;
-  const expected = carrier ?? planned;
   const promised = t(s.promisedDate);
 
   const onHold = last?.code === "CUSTOMS_HOLD";
   const mode = s.legs[last?.leg ?? 0].mode;
   const stale = !delivered && t(now) - t(silentSince) > STALE_AFTER[mode];
-  const late = !delivered && (t(expected) > promised || t(now) > promised);
+
+  // The booking plan only holds while nothing has gone wrong and the current leg is not behind it.
+  const leg = last?.leg ?? 0;
+  const due = !last ? s.legs[0].plannedDeparture : last.code === "VESSEL_ARRIVED" ? s.legs[leg + 1]?.plannedDeparture : s.legs[leg].plannedArrival;
+  const planHolds = !onHold && !stale && last?.code !== "DELIVERY_FAILED" && !(due && t(due) < t(now));
+  // A carrier estimate for an earlier leg, plus plan, is only a floor: a calculated range beats it.
+  const floor = !!est && est.event.leg! < s.legs.length - 1;
+  const [expected, basis] = carrier && !(floor && predicted)
+    ? [carrier, "carrier" as const]
+    : planHolds && !carrier
+      ? [planned, "planned" as const]
+      : predicted
+        ? [predicted.to, "calculated" as const]
+        : [undefined, undefined];
+  // A calculated range past the promise is a risk, not a confirmed delay; a carrier date past it, even a floor, is.
+  const late = !delivered && ((!!carrier && t(carrier) > promised) || (basis === "planned" && t(planned) > promised) || t(now) > promised);
   const atRisk = !delivered && !!predicted && t(predicted.to) > promised;
   const missingDoc = s.documents.some((d) => d.status === "missing");
 
@@ -146,7 +172,7 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
     last,
     silentSince,
     status: delivered ? "delivered" : onHold ? "on_hold" : stale ? "stale" : late ? "delayed" : atRisk ? "at_risk" : "on_track",
-    eta: { planned, carrier, expected, carrierSource: est?.source, predicted, actual: delivered?.at },
+    eta: { planned, planHolds, carrier, carrierEstimate: est?.event, expected, basis, predicted, actual: delivered?.at },
     exceptions,
   };
 }

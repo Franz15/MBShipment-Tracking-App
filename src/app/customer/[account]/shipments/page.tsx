@@ -4,6 +4,8 @@ import { visible } from "@/domain";
 import { CustomerList, Header } from "@/live";
 import { customerPersona, customers } from "@/ui";
 
+export const metadata = { title: "Your shipments" };
+
 export function generateStaticParams() {
   return customers.map((p) => ({ account: p.accountIds![0] }));
 }

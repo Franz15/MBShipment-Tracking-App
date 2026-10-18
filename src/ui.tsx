@@ -1,7 +1,7 @@
 import { Ship, Truck } from "lucide-react";
 import { toEvents, type RawEvent } from "./adapters";
 import { accounts, extractions, operators, personas, predictions, rawEvents, script, sites } from "./data";
-import { DEMO_NOW, view, type Code, type Persona, type Shipment, type ShipmentView, type Status, type TrackingEvent } from "./domain";
+import { DEMO_NOW, view, type Code, type Mode, type Named, type Persona, type Prediction, type Shipment, type ShipmentView, type Status, type TrackingEvent } from "./domain";
 
 export const customers = personas.filter((p) => p.role === "customer");
 export const customerPersona = (account: string) => customers.find((p) => p.accountIds?.includes(account));
@@ -52,7 +52,7 @@ const ago = (iso: string, now: string) => {
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
 };
 
-const nameOf = (list: { id: string; name: string }[]) => (id: string) => list.find((x) => x.id === id)?.name ?? id;
+const nameOf = (list: Named[]) => (id: string) => list.find((x) => x.id === id)?.name ?? id;
 export const operatorName = nameOf(operators);
 export const siteName = nameOf(sites);
 export const accountName = nameOf(accounts);
@@ -77,12 +77,12 @@ const CODE: Record<Code, string> = {
 };
 
 const STATUS = {
-  on_track: ["On track", "text-ok"],
+  on_track: ["On track", "text-ink"],
   at_risk: ["At risk", "text-warn"],
   delayed: ["Delayed", "text-bad"],
   on_hold: ["On hold", "text-bad"],
-  stale: ["No signal", "text-ink-2"],
-  delivered: ["Delivered", "text-ink-2"],
+  stale: ["No signal", "text-stale"],
+  delivered: ["Delivered", "text-ok"],
 } as const;
 export const statusLabel = (s: Status) => STATUS[s][0];
 
@@ -135,7 +135,7 @@ export function customerAlert(v: ShipmentView) {
         ? `Customs needs the ${missing.join(" and ")}. We are filing it with the broker.`
         : "Held at customs. We are in contact with the broker.";
     if (e.type === "delivery_failed") return "Delivery attempt failed. We are rebooking it with the carrier.";
-    if (e.type === "stale") return `No update from the carrier for ${ago(v.silentSince, v.now)}. We are checking with them.`;
+    if (e.type === "stale") return `No update from the carrier since ${dayTime(v.silentSince)}. We are checking with them.`;
     if (e.type === "delay") return `Expected after the promised date of ${day(v.shipment.promisedDate)}.`;
     if (e.type === "at_risk" && v.eta.predicted)
       return `May arrive after the promised date. Calculated estimate ${range(v.eta.predicted.from, v.eta.predicted.to)}.`;
@@ -147,20 +147,49 @@ const Late = ({ iso, promised }: { iso: string; promised: string }) => {
   return d > 0 ? <span className="font-semibold text-bad">+{d}d</span> : null;
 };
 
-// Best-known arrival, with the word that says where it comes from.
+const BASIS = { carrier: "Carrier", planned: "Planned", calculated: "Calculated" } as const;
+const SOURCE = { carrier: "carrier estimate", planned: "booking plan", calculated: "calculated by AI" } as const;
+
+// The expected date as text: one day, or the calculated range.
+export const expectedText = (v: ShipmentView) =>
+  v.eta.basis === "calculated" ? range(v.eta.predicted!.from, v.eta.predicted!.to) : v.eta.expected && day(v.eta.expected);
+
+// Best date we can stand behind, with the word that says where it comes from. Never a plan that no longer holds.
 export function Expected({ v }: { v: ShipmentView }) {
   if (v.eta.actual) return <>Delivered {day(v.eta.actual)}</>;
-  const iso = v.eta.expected;
+  if (!v.eta.basis) return <span className="text-ink-2">Unknown</span>;
   return (
     <>
-      <span className="text-ink-2">{v.eta.carrier ? "Carrier" : "Planned"}</span> {day(iso)}{" "}
-      <Late iso={iso} promised={v.shipment.promisedDate} />
+      <span className="text-ink-2">{BASIS[v.eta.basis]}</span> {expectedText(v)}{" "}
+      <Late iso={v.eta.expected!} promised={v.shipment.promisedDate} />
     </>
   );
 }
 
-export const etaSource = ({ eta: { carrierSource: src } }: ShipmentView) =>
-  src ? `${operatorName(src.operatorId)}, sent ${dayTime(src.receivedAt)}` : "Booking plan, no carrier estimate yet";
+const calculatedBy = (p: Prediction) => `Calculated by AI from ${p.sample} past shipments on this lane`;
+
+// Why the booking plan stopped being a valid date.
+function planBroken(v: ShipmentView) {
+  if (v.status === "on_hold") return "held at customs";
+  if (v.last?.code === "DELIVERY_FAILED") return "the delivery attempt failed";
+  if (v.status === "stale")
+    return v.events.length ? `no update from the carrier since ${dayTime(v.silentSince)}` : `pickup planned ${dayTime(v.silentSince)} not confirmed`;
+  return "the shipment is behind the booking plan";
+}
+
+const sentBy = (e: TrackingEvent) => `${operatorName(e.source.operatorId)}, sent ${dayTime(e.source.receivedAt)}`;
+
+// Where the expected date comes from, in one sentence.
+export function etaSource(v: ShipmentView) {
+  if (v.eta.basis === "carrier") return sentBy(v.eta.carrierEstimate!);
+  if (v.eta.basis === "planned") return "Booking plan, no carrier estimate yet";
+  if (v.eta.basis === "calculated") return calculatedBy(v.eta.predicted!);
+  return `No reliable date yet: ${planBroken(v)}`;
+}
+
+// A carrier estimate for an earlier leg only covers that point; the rest of the date is plan.
+export const carrierScope = ({ eta: { carrierEstimate: e }, shipment }: ShipmentView) =>
+  e && e.leg! < shipment.legs.length - 1 ? `Covers ${e.location}, ${dayTime(e.at)}. Later legs follow the booking plan.` : undefined;
 
 const Dot = ({ filled }: { filled: boolean }) => (
   <span className={`size-2 shrink-0 rounded-full ${filled ? "bg-ink" : "border border-line-strong"}`} aria-hidden />
@@ -173,8 +202,8 @@ export const Term = ({ children }: { children: React.ReactNode }) => (
 // Promised, then carrier, calculated and actual. Each layer looks different and names its source.
 function Eta({ v }: { v: ShipmentView }) {
   const { promisedDate } = v.shipment;
-  const src = v.eta.carrierSource;
-  const p = v.eta.predicted;
+  const { basis, planHolds, planned, carrier, predicted: p } = v.eta;
+  const scope = carrierScope(v);
   return (
     <dl className="space-y-4">
       <div>
@@ -188,26 +217,49 @@ function Eta({ v }: { v: ShipmentView }) {
         </div>
       ) : (
         <>
-          <div>
-            <Term>{src ? "Carrier estimate" : "Planned"}</Term>
-            <dd className="flex items-center gap-2">
-              <Dot filled={false} />
-              {day(v.eta.expected)} <Late iso={v.eta.expected} promised={promisedDate} />
-            </dd>
-            <dd className="text-xs text-ink-2">{etaSource(v)}</dd>
-          </div>
+          {/* Shown even when it is only a floor and the calculated range below is the expected date. */}
+          {carrier ? (
+            <div>
+              <Term>Carrier estimate</Term>
+              <dd className="flex items-center gap-2">
+                <Dot filled={false} />
+                {day(carrier)} <Late iso={carrier} promised={promisedDate} />
+              </dd>
+              <dd className="text-xs text-ink-2">{sentBy(v.eta.carrierEstimate!)}</dd>
+              {scope && <dd className="text-xs text-ink-2">{scope}</dd>}
+            </div>
+          ) : (
+            <div>
+              <Term>Planned</Term>
+              <dd className={`flex items-center gap-2 ${planHolds ? "" : "text-ink-2 line-through"}`}>
+                <Dot filled={false} />
+                {day(planned)} {planHolds && <Late iso={planned} promised={promisedDate} />}
+              </dd>
+              <dd className="text-xs text-ink-2">{planHolds ? etaSource(v) : `No longer holds: ${planBroken(v)}.`}</dd>
+            </div>
+          )}
           {p && (
             <div>
               <Term>Calculated estimate</Term>
               <dd className="mt-1 border border-dashed border-line-strong px-3 py-2">
                 {range(p.from, p.to)} <Late iso={p.to} promised={promisedDate} />
-                <details className="mt-1 text-xs text-ink-2">
-                  <summary className="cursor-pointer">
-                    {p.confidence[0].toUpperCase() + p.confidence.slice(1)} confidence, see why
-                  </summary>
+                <p className="mt-1 text-xs text-ink-2">
+                  {calculatedBy(p)}. {p.confidence[0].toUpperCase() + p.confidence.slice(1)} confidence.
+                </p>
+                <details className="text-xs text-ink-2">
+                  <summary className="cursor-pointer py-1 text-accent hover:underline">See why</summary>
+                  <p>8 in 10 of those shipments arrived within this range.</p>
                   <ul className="mt-1 list-disc pl-4">{p.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                  <p className="mt-1">{p.updates}</p>
                 </details>
               </dd>
+            </div>
+          )}
+          {!basis && (
+            <div>
+              <Term>Expected</Term>
+              <dd className="font-semibold">Unknown</dd>
+              <dd className="text-xs text-ink-2">No carrier estimate and no calculated range yet.</dd>
             </div>
           )}
         </>
@@ -216,7 +268,7 @@ function Eta({ v }: { v: ShipmentView }) {
   );
 }
 
-const ModeIcon = ({ mode }: { mode: "road" | "sea" }) =>
+const ModeIcon = ({ mode }: { mode: Mode }) =>
   mode === "sea" ? <Ship size={14} aria-label="Sea" /> : <Truck size={14} aria-label="Road" />;
 
 const BAD_CODES: Code[] = ["CUSTOMS_HOLD", "DELIVERY_FAILED"];
@@ -263,7 +315,7 @@ export function Timeline({ v }: { v: ShipmentView }) {
         <li key={s.key} className={`relative pb-6 pl-6 ${i < all.length - 1 ? "border-l" : ""} ${s.done ? "border-ink-2" : "border-line"}`}>
           <span
             className={`absolute -left-1 top-1 size-2 rounded-full ${
-              s.events.some((e) => BAD_CODES.includes(e.code)) ? "bg-bad" : s.done ? "bg-ink-2" : "border border-line-strong bg-white"
+              s.events.some((e) => BAD_CODES.includes(e.code)) ? "bg-bad" : s.done ? "bg-ink-2" : "border border-line-strong bg-surface"
             }`}
             aria-hidden
           />
@@ -286,27 +338,42 @@ export function Timeline({ v }: { v: ShipmentView }) {
   );
 }
 
+// Available files download (one synthetic PDF stands in for all). Missing ones say what they block.
 function Documents({ v, onUpload }: { v: ShipmentView; onUpload?: (name: string) => void }) {
   return (
     <ul className="space-y-2">
-      {v.shipment.documents.map((d) => (
-        <li key={d.name} className="flex flex-wrap items-baseline justify-between gap-x-3">
-          {d.name}
-          {d.status === "available" ? (
-            <span className="text-ink-2">Available</span>
-          ) : (
-            <span className="flex items-baseline gap-3">
-              <span className="font-semibold text-bad">Missing</span>
-              {onUpload && (
-                <label className="-my-1 cursor-pointer py-1 text-accent hover:underline focus-within:outline-2 focus-within:outline-accent">
-                  Upload
-                  <input type="file" className="sr-only" onChange={(e) => e.target.files?.length && onUpload(d.name)} />
-                </label>
+      {v.shipment.documents.map((d) =>
+        d.status === "available" ? (
+          <li key={d.name} className="flex items-baseline justify-between gap-x-3">
+            <a href="/sample-document.pdf" download={`${v.shipment.ref} ${d.name}.pdf`} className="-my-1 py-1 text-accent hover:underline">
+              {d.name}
+            </a>
+            <span className="text-xs text-ink-2">PDF</span>
+          </li>
+        ) : (
+          <li key={d.name}>
+            <div className="flex items-baseline justify-between gap-x-3">
+              {d.name}
+              {onUpload ? (
+                <span className="flex items-baseline gap-3">
+                  <span className="font-semibold text-bad">Missing</span>
+                  <label className="-my-1 cursor-pointer py-1 text-accent hover:underline focus-within:outline-2 focus-within:outline-accent">
+                    Upload
+                    <input type="file" className="sr-only" onChange={(e) => e.target.files?.length && onUpload(d.name)} />
+                  </label>
+                </span>
+              ) : (
+                <span className="font-semibold text-bad">Pending</span>
               )}
-            </span>
-          )}
-        </li>
-      ))}
+            </div>
+            {!onUpload && (
+              <p className="text-xs text-ink-2">
+                {v.shipment.customs ? "Customs needs it to clear the shipment." : "We are preparing it."}
+              </p>
+            )}
+          </li>
+        ),
+      )}
     </ul>
   );
 }
@@ -323,30 +390,49 @@ export function ShipmentHead({ v, lead, children }: { v: ShipmentView; lead?: st
         <span className="mr-2 font-mono text-ink">{v.shipment.ref}</span>
         {lead && `${lead}, `}{siteName(v.shipment.originSiteId)} → {v.shipment.destination}
       </p>
+      {!v.eta.actual && (
+        <p className="mt-3">
+          Promised {day(v.shipment.promisedDate)}.{" "}
+          {v.eta.basis ? (
+            <>
+              Expected <span className="font-semibold">{expectedText(v)}</span>{" "}
+              <Late iso={v.eta.expected!} promised={v.shipment.promisedDate} />{" "}
+              <span className="text-ink-2">({SOURCE[v.eta.basis]})</span>
+            </>
+          ) : (
+            "Expected date unknown."
+          )}
+        </p>
+      )}
       {children}
     </div>
   );
 }
 
-// Detail body: page-specific main column, arrival and documents on the side.
+// Detail body: page-specific main column, arrival and documents on the side. `side` (the customer map) leads the
+// side column on desktop and goes last on phones, below the fold, so MapLibre stays off the first load.
 export function ShipmentBody({ v, onUpload, side, children }: { v: ShipmentView; onUpload?: (name: string) => void; side?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="mt-8 grid gap-10 md:grid-cols-[1fr_18rem]">
       <div className="flex flex-col gap-10">{children}</div>
-      <div className="space-y-8">
+      <div className="flex flex-col gap-8">
         <section>
-          <h2 className="mb-3 font-semibold">Arrival</h2>
+          <h2 className="mb-3 text-base font-semibold">Arrival</h2>
           <Eta v={v} />
         </section>
         <section id="documents">
-          <h2 className="mb-3 font-semibold">Documents</h2>
+          <h2 className="mb-3 text-base font-semibold">Documents</h2>
           <Documents v={v} onUpload={onUpload} />
         </section>
-        {side}
+        {side && <div className="md:-order-1">{side}</div>}
       </div>
     </div>
   );
 }
+
+// Shared button style. Lives here, not in live.tsx: server pages cannot read values from a client module.
+export const button =
+  "border border-ink-2 px-3 py-1 font-semibold hover:border-ink active:bg-line disabled:cursor-not-allowed disabled:border-line disabled:text-ink-2";
 
 // Shared table cell styles so customer and ops tables stay one pattern.
 export const th = "px-3 py-2 text-left text-xs font-semibold text-ink-2 whitespace-nowrap";

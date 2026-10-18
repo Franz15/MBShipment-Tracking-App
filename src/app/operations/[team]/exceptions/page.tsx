@@ -4,6 +4,8 @@ import { visible } from "@/domain";
 import { Header, OpsExceptions } from "@/live";
 import { opsPersona, opsTeams } from "@/ui";
 
+export const metadata = { title: "Exceptions" };
+
 export function generateStaticParams() {
   return opsTeams.map((p) => ({ team: p.id }));
 }
