@@ -17,7 +17,7 @@ export type Code =
   | "DELIVERY_FAILED";
 
 export type Site = { id: string; name: string };
-export type Account = { id: string; name: string; country: string };
+export type Account = { id: string; name: string };
 export type Operator = { id: string; name: string };
 
 export type Leg = {
@@ -73,7 +73,6 @@ export type Persona = {
 };
 
 export type Status = "on_track" | "at_risk" | "delayed" | "on_hold" | "stale" | "delivered";
-export type Phase = "preparing" | "in_transit" | "at_customs" | "out_for_delivery" | "delivered";
 export type Action = "notify_customer" | "contact_operator" | "upload_document";
 export type ShipmentException = {
   type: "customs_hold" | "delivery_failed" | "stale" | "delay" | "at_risk" | "missing_document";
@@ -86,9 +85,8 @@ export type ShipmentView = {
   events: TrackingEvent[];
   last?: TrackingEvent;
   lastUpdate?: string;
-  phase: Phase;
   status: Status;
-  eta: { planned: string; carrier?: string; predicted?: Prediction; actual?: string };
+  eta: { planned: string; carrier?: string; carrierSource?: TrackingEvent["source"]; predicted?: Prediction; actual?: string };
   exceptions: ShipmentException[];
 };
 
@@ -96,13 +94,6 @@ const t = Date.parse;
 const H = 3_600_000;
 // Max silence per mode before a shipment counts as stale.
 const STALE_AFTER: Record<Mode, number> = { road: 12 * H, sea: 96 * H };
-
-const PHASE: Partial<Record<Code, Phase>> = {
-  CUSTOMS_HOLD: "at_customs",
-  OUT_FOR_DELIVERY: "out_for_delivery",
-  DELIVERY_FAILED: "out_for_delivery",
-  DELIVERED: "delivered",
-};
 
 export const visible = (p: Persona, shipments: Shipment[]) =>
   shipments.filter(
@@ -117,7 +108,7 @@ function carrierEta(s: Shipment, events: TrackingEvent[]) {
     .at(-1);
   if (!est) return undefined;
   const rest = s.legs.slice(est.leg! + 1).reduce((sum, l) => sum + t(l.plannedArrival) - t(l.plannedDeparture), 0);
-  return new Date(t(est.at) + rest).toISOString();
+  return { at: new Date(t(est.at) + rest).toISOString(), source: est.source };
 }
 
 export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Prediction | undefined, now: string): ShipmentView {
@@ -128,7 +119,8 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
   const lastUpdate = events.map((e) => e.source.receivedAt).sort((a, b) => t(a) - t(b)).at(-1);
 
   const planned = s.legs.at(-1)!.plannedArrival;
-  const carrier = carrierEta(s, events);
+  const est = carrierEta(s, events);
+  const carrier = est?.at;
   const promised = t(s.promisedDate);
 
   const onHold = last?.code === "CUSTOMS_HOLD";
@@ -152,9 +144,8 @@ export function view(s: Shipment, allEvents: TrackingEvent[], predicted: Predict
     events,
     last,
     lastUpdate,
-    phase: last ? (PHASE[last.code] ?? "in_transit") : "preparing",
     status: delivered ? "delivered" : onHold ? "on_hold" : stale ? "stale" : late ? "delayed" : atRisk ? "at_risk" : "on_track",
-    eta: { planned, carrier, predicted, actual: delivered?.at },
+    eta: { planned, carrier, carrierSource: est?.source, predicted, actual: delivered?.at },
     exceptions,
   };
 }

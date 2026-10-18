@@ -32,7 +32,7 @@ export type Extraction = {
   evidence: string;
 };
 
-export const AUTO_APPLY = 0.9;
+const AUTO_APPLY = 0.9;
 
 const DCSA: Record<string, Code> = { DEPA: "VESSEL_DEPARTED", ARRI: "VESSEL_ARRIVED", GTIN: "ARRIVED_PORT" };
 const LOCODE: Record<string, string> = {

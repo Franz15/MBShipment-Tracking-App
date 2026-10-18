@@ -9,11 +9,11 @@ export const sites: Site[] = [
 ];
 
 export const accounts: Account[] = [
-  { id: "lyon-subsidiary", name: "Iberforge France", country: "FR" },
-  { id: "uk-distributor", name: "Northbridge Distribution", country: "UK" },
-  { id: "mexico-subsidiary", name: "Iberforge México", country: "MX" },
-  { id: "meseta", name: "Construcciones Meseta", country: "ES" },
-  { id: "lombarda", name: "Ferramenta Lombarda", country: "IT" },
+  { id: "lyon-subsidiary", name: "Iberforge France" },
+  { id: "uk-distributor", name: "Northbridge Distribution" },
+  { id: "mexico-subsidiary", name: "Iberforge México" },
+  { id: "meseta", name: "Construcciones Meseta" },
+  { id: "lombarda", name: "Ferramenta Lombarda" },
 ];
 
 export const operators: Operator[] = [
@@ -24,10 +24,10 @@ export const operators: Operator[] = [
 ];
 
 export const personas: Persona[] = [
-  { id: "lyon-subsidiary", name: "Iberforge France · Lyon", role: "customer", accountIds: ["lyon-subsidiary"] },
-  { id: "uk-distributor", name: "Northbridge Distribution · UK", role: "customer", accountIds: ["uk-distributor"] },
+  { id: "lyon-subsidiary", name: "Iberforge France, Lyon", role: "customer", accountIds: ["lyon-subsidiary"] },
+  { id: "uk-distributor", name: "Northbridge Distribution, UK", role: "customer", accountIds: ["uk-distributor"] },
   { id: "valencia-site", name: "Valencia warehouse team", role: "operations", siteIds: ["valencia-warehouse"] },
-  { id: "key-accounts", name: "Key accounts desk · UK + Mexico", role: "operations", accountIds: ["uk-distributor", "mexico-subsidiary"] },
+  { id: "key-accounts", name: "Key accounts desk, UK and Mexico", role: "operations", accountIds: ["uk-distributor", "mexico-subsidiary"] },
 ];
 
 const road = (operatorId: string, from: string, to: string, plannedDeparture: string, plannedArrival: string): Leg => ({
@@ -141,8 +141,8 @@ export const shipments: Shipment[] = [
   },
 ];
 
-const es = (id: string, shipmentRef: string, leg: number, estado: string, fecha: string, ubicacion: string, receivedAt: string, operatorId = "trans-iberia"): RawEvent => ({
-  id, operatorId, shipmentRef, leg, receivedAt, format: "text-es", payload: { estado, fecha, ubicacion },
+const es = (id: string, shipmentRef: string, leg: number, estado: string, fecha: string, ubicacion: string, receivedAt: string): RawEvent => ({
+  id, operatorId: "trans-iberia", shipmentRef, leg, receivedAt, format: "text-es", payload: { estado, fecha, ubicacion },
 });
 const dcsa = (id: string, shipmentRef: string, leg: number, receivedAt: string, payload: Dcsa): RawEvent => ({
   id, operatorId: "atlas", shipmentRef, leg, receivedAt, format: "dcsa", payload,

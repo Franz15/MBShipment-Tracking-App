@@ -53,10 +53,8 @@ describe("shipment view", () => {
     });
   });
 
-  it("phases and next actions", () => {
+  it("next actions", () => {
     const v = views();
-    expect(v["SHP-5001"].phase).toBe("preparing");
-    expect(v["SHP-2001"].phase).toBe("at_customs");
     expect(v["SHP-2001"].exceptions[0]).toMatchObject({ type: "customs_hold", action: "upload_document" });
     expect(v["SHP-4002"].exceptions.map((e) => e.type)).toEqual(["delivery_failed", "stale", "delay"]);
   });
