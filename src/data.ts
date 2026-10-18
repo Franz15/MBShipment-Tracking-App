@@ -321,3 +321,33 @@ export const script: { now: string; note: string; raw?: RawEvent; predictions?: 
     raw: es("r1041-3", "SHP-1041", 0, "ENTREGADO", "13/11/2026 09:10", "Lyon, FR", "2026-11-13T09:15:00Z"),
   },
 ];
+
+// Map points as [lng, lat], keyed by the place text used in legs and events.
+export const coords: Record<string, [number, number]> = {
+  "Zaragoza plant": [-0.88, 41.65],
+  "Zaragoza, ES": [-0.88, 41.65],
+  "Bilbao plant": [-2.93, 43.26],
+  "Bilbao, ES": [-2.93, 43.26],
+  "Bilbao port": [-3.05, 43.34],
+  "Bilbao port, ES": [-3.05, 43.34],
+  "Valencia warehouse": [-0.38, 39.47],
+  "Valencia, ES": [-0.38, 39.47],
+  "Portsmouth port": [-1.09, 50.81],
+  "Portsmouth port, UK": [-1.09, 50.81],
+  "Birmingham, UK": [-1.89, 52.49],
+  "Manchester, UK": [-2.24, 53.48],
+  "Toulouse, FR": [1.44, 43.6],
+  "Narbonne, FR": [3.0, 43.18],
+  "Montpellier, FR": [3.88, 43.61],
+  "Lyon, FR": [4.84, 45.76],
+};
+
+// Waypoints between leg ends: the sea lane goes round Brittany, road legs follow the motorway corridor
+// so confirmed checkpoints sit on the planned line.
+const via = (...places: string[]) => places.map((p) => coords[p]);
+export const lanes: Record<string, [number, number][]> = {
+  "Bilbao port>Portsmouth port": [[-4.5, 44.5], [-5.8, 48.2], [-2.0, 50.3], [-1.0, 50.6]],
+  "Bilbao plant>Lyon, FR": [[-1.47, 43.49], ...via("Toulouse, FR", "Narbonne, FR", "Montpellier, FR")],
+  "Zaragoza plant>Lyon, FR": [[0.62, 41.62], [2.17, 41.39], [2.87, 42.45], ...via("Narbonne, FR", "Montpellier, FR")],
+  "Valencia warehouse>Lyon, FR": [[-0.04, 39.99], [1.25, 41.12], [2.17, 41.39], [2.87, 42.45], ...via("Narbonne, FR", "Montpellier, FR")],
+};

@@ -1,13 +1,14 @@
 "use client";
 // Everything that reads the demo state. Pages stay server shells and pass ids and shipments in.
 import { Menu } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Fragment, useState, useSyncExternalStore } from "react";
 import { normalize, type RawEvent } from "./adapters";
 import { briefings, drafts, extractions, personas, script, shipments } from "./data";
-import { DEMO_NOW, visible, type Shipment, type Status } from "./domain";
+import { DEMO_NOW, visible, type Shipment, type ShipmentView, type Status } from "./domain";
 import {
-  accountName, customerAlert, day, dayTime, Expected, INITIAL, latestMessage, nextAction, operatorName, pendingEmails, personaHref,
+  accountName, customerAlert, day, dayTime, etaSource, Expected, INITIAL, latestMessage, nextAction, operatorName, pendingEmails, personaHref,
   played, readAs, ShipmentBody, ShipmentHead, shipmentViews, siteName, statusLabel, StatusBadge, td, Term, th, Timeline, touched,
   type Demo, type Review,
 } from "./ui";
@@ -48,6 +49,9 @@ function setDemo(next: Demo) {
 }
 
 const useDemo = () => useSyncExternalStore(subscribe, () => (state ??= read()), () => INITIAL);
+
+// MapLibre needs window and weighs ~230 KB gzip: client only, fetched on customer detail pages.
+const RouteMap = dynamic(() => import("./map"), { ssr: false });
 
 const button =
   "border border-ink-2 px-3 py-1 font-semibold hover:border-ink active:bg-line disabled:cursor-not-allowed disabled:border-line disabled:text-ink-2";
@@ -226,7 +230,64 @@ export function CustomerList({ account, list }: { account: string; list: Shipmen
           ))}
         </tbody>
       </table>
+      <Ask account={account} views={rows.map((r) => r.v)} />
     </>
+  );
+}
+
+// Scripted questions. Every answer is built from the same views as the table above.
+function Ask({ account, views }: { account: string; views: ShipmentView[] }) {
+  const ref = (v: ShipmentView) => (
+    <Link href={`/customer/${account}/shipments/${v.shipment.ref}`} className="font-mono text-accent hover:underline">{v.shipment.ref}</Link>
+  );
+  const late = views.filter((v) => v.exceptions.some((e) => e.type === "delay" || e.type === "at_risk" || e.type === "stale"));
+  const next = views.filter((v) => !v.eta.actual).toSorted((a, b) => Date.parse(a.eta.expected) - Date.parse(b.eta.expected))[0];
+  const latest = views
+    .flatMap((v) => v.events.map((e) => ({ v, e })))
+    .toSorted((a, b) => Date.parse(a.e.source.receivedAt) - Date.parse(b.e.source.receivedAt))
+    .at(-1);
+  const qa: [string, React.ReactNode][] = [
+    [
+      "Will anything arrive late?",
+      late.length
+        ? late.map((v) => <p key={v.shipment.ref}>{ref(v)}: {customerAlert(v)}</p>)
+        : `None. All ${views.length} are expected by the promised date.`,
+    ],
+    [
+      "What arrives next?",
+      next ? (
+        <>
+          {ref(next)} to {next.shipment.destination}, expected {day(next.eta.expected)}. {etaSource(next)}. {customerAlert(next)}
+        </>
+      ) : (
+        `Nothing. All ${views.length} shipments are delivered.`
+      ),
+    ],
+    [
+      "What is the latest update?",
+      latest ? (
+        <>{ref(latest.v)}: {readAs(latest.e)}. From {operatorName(latest.e.source.operatorId)}, sent {dayTime(latest.e.source.receivedAt)}.</>
+      ) : (
+        "No updates yet."
+      ),
+    ],
+    ["Can you check a shipment that is not on this list?", `I can only see your shipments, the ${views.length} in the table above.`],
+  ];
+  return (
+    <section className="mt-8 max-w-prose">
+      <h2 className="mb-3 font-semibold">Questions about your shipments</h2>
+      <div className="space-y-2">
+        {qa.map(([q, a]) => (
+          <details key={q} name="ask" className="group">
+            <summary className={`${button} inline-block cursor-pointer list-none group-open:border-ink [&::-webkit-details-marker]:hidden`}>{q}</summary>
+            <div className="mt-2 mb-2 border border-dashed border-line-strong px-4 py-3">
+              <p className="text-xs text-ink-2">Answered by AI from the shipments above, as of {dayTime(views[0].now)}.</p>
+              <div className="mt-1 space-y-1">{a}</div>
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -236,7 +297,21 @@ export function CustomerShipment({ shipment }: { shipment: Shipment }) {
   return (
     <>
       <ShipmentHead v={v}>{alert && <p className="mt-3 max-w-prose">{alert}</p>}</ShipmentHead>
-      <ShipmentBody v={v}>
+      <ShipmentBody
+        v={v}
+        side={
+          <section>
+            <h2 className="mb-3 font-semibold">Map</h2>
+            <div className="aspect-[4/3] md:aspect-square" aria-hidden>
+              <RouteMap key={v.events.filter((e) => e.kind === "actual").map((e) => e.source.rawId).join()} v={v} />
+            </div>
+            <p className="mt-2 text-xs text-ink-2">
+              Dots: confirmed by tracking events. Line: booking plan. No live vessel position.{" "}
+              <a href="https://www.openstreetmap.org/copyright" className="text-accent hover:underline">© OpenStreetMap contributors</a>
+            </p>
+          </section>
+        }
+      >
         <section>
           <h2 className="mb-4 font-semibold">Journey</h2>
           <Timeline v={v} />

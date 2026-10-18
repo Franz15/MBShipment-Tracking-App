@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalize, toEvents, type RawEvent } from "./adapters";
-import { extractions, personas, rawEvents, shipments } from "./data";
+import { coords, extractions, personas, rawEvents, script, shipments } from "./data";
 import { DEMO_NOW, visible } from "./domain";
 import { INITIAL, shipmentViews } from "./ui";
 
@@ -81,6 +81,16 @@ describe("demo script", () => {
 
 describe("perimeter", () => {
   const refs = (id: string) => visible(personas.find((p) => p.id === id)!, shipments).map((s) => s.ref);
+
+  it("customer maps place every leg end and every confirmed event", () => {
+    const own = personas.filter((p) => p.role === "customer").flatMap((p) => visible(p, shipments));
+    const raws = [...rawEvents, ...script.flatMap((s) => s.raw ?? [])].filter((r) => own.some((s) => s.ref === r.shipmentRef));
+    const places = [
+      ...own.flatMap((s) => s.legs.flatMap((l) => [l.from, l.to])),
+      ...toEvents(raws, extractions, Object.keys(extractions)).filter((e) => e.kind === "actual").map((e) => e.location),
+    ];
+    expect(places.filter((p) => !coords[p])).toEqual([]);
+  });
 
   it("customer sees only own account, ops only own site or accounts", () => {
     expect(refs("lyon-subsidiary")).toEqual(["SHP-1041", "SHP-1042", "SHP-1043"]);

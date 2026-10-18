@@ -159,6 +159,9 @@ export function Expected({ v }: { v: ShipmentView }) {
   );
 }
 
+export const etaSource = ({ eta: { carrierSource: src } }: ShipmentView) =>
+  src ? `${operatorName(src.operatorId)}, sent ${dayTime(src.receivedAt)}` : "Booking plan, no carrier estimate yet";
+
 const Dot = ({ filled }: { filled: boolean }) => (
   <span className={`size-2 shrink-0 rounded-full ${filled ? "bg-ink" : "border border-line-strong"}`} aria-hidden />
 );
@@ -191,9 +194,7 @@ function Eta({ v }: { v: ShipmentView }) {
               <Dot filled={false} />
               {day(v.eta.expected)} <Late iso={v.eta.expected} promised={promisedDate} />
             </dd>
-            <dd className="text-xs text-ink-2">
-              {src ? `${operatorName(src.operatorId)}, sent ${dayTime(src.receivedAt)}` : "Booking plan, no carrier estimate yet"}
-            </dd>
+            <dd className="text-xs text-ink-2">{etaSource(v)}</dd>
           </div>
           {p && (
             <div>
@@ -328,7 +329,7 @@ export function ShipmentHead({ v, lead, children }: { v: ShipmentView; lead?: st
 }
 
 // Detail body: page-specific main column, arrival and documents on the side.
-export function ShipmentBody({ v, onUpload, children }: { v: ShipmentView; onUpload?: (name: string) => void; children: React.ReactNode }) {
+export function ShipmentBody({ v, onUpload, side, children }: { v: ShipmentView; onUpload?: (name: string) => void; side?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="mt-8 grid gap-10 md:grid-cols-[1fr_18rem]">
       <div className="flex flex-col gap-10">{children}</div>
@@ -341,6 +342,7 @@ export function ShipmentBody({ v, onUpload, children }: { v: ShipmentView; onUpl
           <h2 className="mb-3 font-semibold">Documents</h2>
           <Documents v={v} onUpload={onUpload} />
         </section>
+        {side}
       </div>
     </div>
   );
