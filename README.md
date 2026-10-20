@@ -26,4 +26,4 @@ Tested with Node 24. `npm run build` prerenders every page as static HTML.
 - `src/app/`: routes for the landing page, the customer portal and the operations portal.
 - `src/domain.test.ts`: Vitest suite for the domain rules.
 
-Design notes, scope and the path to production are in the write-up.
+Where the AI goes, the production architecture, assumptions and next steps are in [WRITEUP.md](WRITEUP.md).
